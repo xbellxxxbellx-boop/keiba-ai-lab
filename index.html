@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101827">
+<title>競馬AIラボ | 個人用プロトタイプ</title>
+<style>
+:root{--bg:#0b1220;--panel:#131e30;--panel2:#1a2940;--text:#f4f7fb;--muted:#9eb0c8;--line:#2b3b54;--accent:#7dd3fc;--good:#86efac;--warn:#fcd34d}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0b1220,#101a2a);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;line-height:1.5}
+header{padding:24px 18px 18px;background:#101827;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:3}
+h1{font-size:23px;margin:0 0 4px}header p{margin:0;color:var(--muted);font-size:12px}
+nav{display:flex;gap:8px;overflow:auto;padding:12px 14px;background:#101827;position:sticky;top:84px;z-index:2}
+nav button{white-space:nowrap;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:999px;padding:9px 13px}
+nav button.active{background:var(--accent);color:#082032;border-color:var(--accent);font-weight:700}
+main{max-width:760px;margin:auto;padding:14px 14px 100px}.view{display:none}.view.active{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px;margin-bottom:13px}
+h2{font-size:18px;margin:0 0 12px}h3{font-size:15px;margin:12px 0 7px}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}
+input,select,textarea{width:100%;background:#0b1423;border:1px solid #344760;color:var(--text);padding:11px;border-radius:10px;font:inherit;font-size:15px}
+textarea{min-height:76px;resize:vertical}button{font:inherit;cursor:pointer}
+.btn{background:var(--accent);color:#082032;border:0;border-radius:11px;padding:11px 14px;font-weight:750;margin-top:10px}
+.btn.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+.btn.danger{background:#572d39;color:#ffe4e6}
+.row{display:flex;gap:9px}.row>*{flex:1;min-width:0}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.stat{background:var(--panel2);border-radius:12px;padding:12px}.stat small{color:var(--muted);display:block}.stat strong{font-size:22px}
+.muted{color:var(--muted);font-size:12px}.pill{display:inline-block;border:1px solid var(--line);padding:3px 8px;border-radius:999px;font-size:11px;color:var(--muted)}
+.item{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:9px;background:#101a2a}
+.item strong{display:block}.item p{margin:4px 0;color:var(--muted);font-size:13px;white-space:pre-wrap}
+.checkrow{display:flex;gap:8px;align-items:center}.checkrow input{width:auto}
+hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+.empty{color:var(--muted);padding:12px 0}.warning{border-left:3px solid var(--warn);padding:9px 11px;background:#2a2517;border-radius:7px;font-size:12px;color:#fce7a1}
+footer{position:fixed;bottom:0;left:0;right:0;background:#101827ed;border-top:1px solid var(--line);padding:9px 14px calc(9px + env(safe-area-inset-bottom));text-align:center;color:var(--muted);font-size:11px}
+a{color:var(--accent);word-break:break-all}
+@media(min-width:600px){.stats{grid-template-columns:repeat(4,minmax(0,1fr))}nav{justify-content:center}}
+</style>
+</head>
+<body>
+<header><h1>🏇 競馬AIラボ</h1><p>個人用プロトタイプ｜データはこのブラウザ内に保存</p></header>
+<nav id="nav">
+<button class="active" data-view="home">ホーム</button><button data-view="add">レース登録</button><button data-view="predict">予想・買い目</button><button data-view="review">結果・反省</button><button data-view="data">データ管理</button>
+</nav>
+<main>
+<section id="home" class="view active">
+ <div class="card"><h2>学習ダッシュボード</h2><div class="stats" id="stats"></div><p class="muted">予想をレース前に保存し、結果入力後に反省を記録することで、検証データを蓄積します。</p></div>
+ <div class="card"><h2>最近のレース</h2><div id="recent"></div><button class="btn" onclick="show('add')">＋ レースを登録する</button></div>
+ <div class="card"><h2>この試作版でできること</h2><p>・YouTube動画URLとレース情報を保存<br>・展開仮説、馬ごとの評価、穴馬理由を記録<br>・3連複フォーメーションの点数計算<br>・結果、購入額、払戻額、反省点を記録<br>・保存データをJSONでバックアップ</p><div class="warning">この版は動画URLを保存する記録・検証アプリです。URLだけで動画を自動ダウンロードしたり、映像を自動解析して学習する機能はまだありません。まず記録データを蓄積し、次段階でデータ連携・映像解析を追加します。</div></div>
+</section>
+<section id="add" class="view">
+ <div class="card"><h2>レース登録</h2><form id="raceForm">
+ <label>レース名</label><input id="raceName" required placeholder="例：東京11R 毎日王冠">
+ <div class="row"><div><label>開催日</label><input id="raceDate" type="date" required></div><div><label>競馬場</label><input id="track" placeholder="例：東京"></div></div>
+ <div class="row"><div><label>距離・コース</label><input id="distance" placeholder="芝1800m"></div><div><label>馬場状態</label><select id="going"><option>未確認</option><option>良</option><option>稍重</option><option>重</option><option>不良</option></select></div></div>
+ <label>YouTubeなどの動画URL</label><input id="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=...">
+ <label>天候・当日の馬場メモ</label><input id="weather" placeholder="例：曇り、内が伸びる印象">
+ <label>展開仮説</label><textarea id="pace" placeholder="逃げ候補、先行争い、想定ペース、差しが届く条件など"></textarea>
+ <label>動画で確認したいこと</label><textarea id="videoNotes" placeholder="例：3〜4角の位置取り、直線の進路、失速した馬"></textarea>
+ <button class="btn" type="submit">レースを保存</button></form></div>
+</section>
+<section id="predict" class="view">
+ <div class="card"><h2>予想・3連複買い目</h2><label>対象レース</label><select id="predRace"></select><div id="predFormArea"><p class="empty">先にレースを登録してください。</p></div></div>
+</section>
+<section id="review" class="view">
+ <div class="card"><h2>結果・反省を記録</h2><label>対象レース</label><select id="reviewRace"></select><div id="reviewArea"><p class="empty">レースを選択してください。</p></div></div>
+ <div class="card"><h2>蓄積した反省点</h2><div id="lessons"></div></div>
+</section>
+<section id="data" class="view">
+ <div class="card"><h2>データ管理</h2><p class="muted">保存データはこのブラウザのローカル領域に保存されます。Safariの履歴・Webサイトデータを消すと失われる場合があるため、定期的にバックアップしてください。</p>
+ <button class="btn" onclick="exportData()">JSONバックアップを書き出す</button>
+ <label>JSONバックアップを復元</label><input type="file" id="importFile" accept=".json,application/json"><button class="btn secondary" onclick="importData()">バックアップを読み込む</button>
+ <hr><button class="btn secondary" onclick="exportCSV()">レース一覧をCSV出力</button><hr>
+ <button class="btn danger" onclick="clearData()">すべてのデータを削除</button></div>
+ <div class="card"><h2>次段階の開発メモ</h2><p>1. 出走表・成績・ラップの取り込み<br>2. 馬ごとの脚質・位置取り・3着内評価<br>3. オッズを使った3連複の期待値比較<br>4. 利用許諾のある映像からフレーム解析<br>5. 過去データを時系列で分けてモデル検証</p></div>
+</section>
+</main>
+<footer>個人用・試作版｜予想や払戻を保証するものではありません</footer>
+<script>
+const KEY='keibaAILab_v1';
+let db=load();
+function load(){try{return JSON.parse(localStorage.getItem(KEY))||{races:[]}}catch(e){return {races:[]}}}
+function save(){localStorage.setItem(KEY,JSON.stringify(db));renderAll()}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===id));if(id==='predict')renderPred();if(id==='review')renderReview();window.scrollTo(0,0)}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.view));
+document.getElementById('raceDate').value=new Date().toISOString().slice(0,10);
+document.getElementById('raceForm').addEventListener('submit',e=>{e.preventDefault();db.races.unshift({id:uid(),name:v('raceName'),date:v('raceDate'),track:v('track'),distance:v('distance'),going:v('going'),videoUrl:v('videoUrl'),weather:v('weather'),pace:v('pace'),videoNotes:v('videoNotes'),horses:[],picks:{axis:[],second:[],third:[],budget:1000},result:{},created:new Date().toISOString()});save();e.target.reset();document.getElementById('raceDate').value=new Date().toISOString().slice(0,10);show('predict')});
+function v(id){return document.getElementById(id).value}
+function raceBy(id){return db.races.find(r=>r.id===id)}
+function options(selected){return db.races.map(r=>`<option value="${r.id}" ${r.id===selected?'selected':''}>${esc(r.date)}｜${esc(r.name)}</option>`).join('')}
+function setOptions(id,prev){let s=document.getElementById(id),old=prev||s.value;s.innerHTML=db.races.length?options(old):'<option value="">レースがありません</option>';if(!raceBy(s.value)&&db.races[0])s.value=db.races[0].id}
+function renderAll(){renderHome();setOptions('predRace');setOptions('reviewRace');renderPred();renderReview()}
+function renderHome(){let all=db.races,done=all.filter(r=>r.result&&r.result.top3&&r.result.top3.length>=3),hits=done.filter(r=>r.result.hit===true),stake=done.reduce((a,r)=>a+(+r.result.stake||0),0),returns=done.reduce((a,r)=>a+(+r.result.returns||0),0);document.getElementById('stats').innerHTML=`<div class="stat"><small>登録レース</small><strong>${all.length}</strong></div><div class="stat"><small>結果入力済</small><strong>${done.length}</strong></div><div class="stat"><small>3連複的中率</small><strong>${done.length?(hits.length/done.length*100).toFixed(1):'—'}%</strong></div><div class="stat"><small>回収率</small><strong>${stake?(returns/stake*100).toFixed(1):'—'}%</strong></div>`;document.getElementById('recent').innerHTML=all.length?all.slice(0,5).map(r=>`<div class="item"><strong>${esc(r.name)} <span class="pill">${esc(r.date)}</span></strong><p>${esc(r.track)} ${esc(r.distance)}｜馬場：${esc(r.going)}</p><button class="btn secondary" onclick="openRace('${r.id}','predict')">予想を開く</button></div>`).join(''):'<p class="empty">まだレースがありません。最初のレースを登録してください。</p>'}
+function openRace(id,view){document.getElementById(view==='predict'?'predRace':'reviewRace').value=id;show(view)}
+function renderPred(){let sel=document.getElementById('predRace');if(!sel||!db.races.length){document.getElementById('predFormArea').innerHTML='<p class="empty">先にレースを登録してください。</p>';return}let r=raceBy(sel.value)||db.races[0];if(!r)return;sel.value=r.id;let p=r.picks||(r.picks={axis:[],second:[],third:[],budget:1000});document.getElementById('predFormArea').innerHTML=`
+<label>出走馬（1行に1頭：「馬番,馬名,評価,穴馬理由」）</label><textarea id="horsesInput" placeholder="5,サンプルホース,軸,展開と能力が合う&#10;8,サンプルスター,相手,先行力あり&#10;12,穴サンプル,穴,ハイペースなら浮上">${esc((r.horses||[]).map(h=>[h.no,h.name,h.rank,h.reason].join(',')).join('\\n'))}</textarea>
+<button class="btn secondary" onclick="saveHorses()">馬リストを保存</button>
+<hr><h3>3連複フォーメーション</h3>
+<label>1列目（馬番をカンマ区切り）</label><input id="axis" value="${esc((p.axis||[]).join(','))}" placeholder="5">
+<label>2列目</label><input id="second" value="${esc((p.second||[]).join(','))}" placeholder="8,12">
+<label>3列目</label><input id="third" value="${esc((p.third||[]).join(','))}" placeholder="3,8,12,14">
+<div class="row"><div><label>購入予算（円）</label><input id="budget" type="number" min="0" step="100" value="${+p.budget||1000}"></div><div><label>1点あたり（円）</label><input id="unit" type="number" min="100" step="100" value="${+p.unit||100}"></div></div>
+<button class="btn" onclick="savePicks()">買い目を計算・保存</button><div id="combos"></div>
+<label>今回の予想根拠・穴馬メモ</label><textarea id="reasoning" placeholder="展開シナリオ、軸の理由、危険な人気馬、穴馬の条件">${esc(r.reasoning||'')}</textarea><button class="btn secondary" onclick="saveReasoning()">予想根拠を保存</button>
+${r.videoUrl?`<p class="muted">動画URL：<a href="${esc(r.videoUrl)}" target="_blank" rel="noopener">動画を開く</a></p>`:''}
+<div class="warning">この版の馬評価は手動入力です。自動的な動画解析・確率推定は未実装。まず予想時点の記録を残し、結果後に評価します。</div>`;
+document.getElementById('combos').innerHTML=comboSummary(r)}
+function parseNos(id){return document.getElementById(id).value.split(/[,，\s、]+/).map(x=>x.trim()).filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i)}
+function combos(p){let a=p.axis||[],b=p.second||[],c=p.third||[],out=new Set();for(let x of a)for(let y of b)for(let z of c){let arr=[x,y,z];if(new Set(arr).size===3)out.add(arr.sort((m,n)=>m.localeCompare(n,undefined,{numeric:true})).join('-'))}return [...out].sort()}
+function comboSummary(r){let c=combos(r.picks||{}),unit=+(r.picks?.unit||100);return `<div class="item"><strong>組み合わせ点数：${c.length}点</strong><p>1点${unit.toLocaleString()}円の場合：${(c.length*unit).toLocaleString()}円</p><p>${c.length?c.map(esc).join(' / '):'馬番を入力して「買い目を計算・保存」を押してください。'}</p></div>`}
+function saveHorses(){let r=raceBy(document.getElementById('predRace').value);if(!r)return;r.horses=document.getElementById('horsesInput').value.split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{let [no,name,rank,reason]=line.split(',');return {no:(no||'').trim(),name:(name||'').trim(),rank:(rank||'').trim(),reason:(reason||'').trim()}});save();alert('馬リストを保存しました')}
+function savePicks(){let r=raceBy(document.getElementById('predRace').value);if(!r)return;r.picks={axis:parseNos('axis'),second:parseNos('second'),third:parseNos('third'),budget:+v('budget')||0,unit:+v('unit')||100};save();document.getElementById('combos').innerHTML=comboSummary(r)}
+function saveReasoning(){let r=raceBy(document.getElementById('predRace').value);if(r){r.reasoning=v('reasoning');save();alert('予想根拠を保存しました')}}
+document.getElementById('predRace').addEventListener('change',renderPred);
+function renderReview(){let sel=document.getElementById('reviewRace');if(!sel||!db.races.length){document.getElementById('reviewArea').innerHTML='<p class="empty">結果を入力するレースがありません。</p>';document.getElementById('lessons').innerHTML='<p class="empty">まだ反省点はありません。</p>';return}let r=raceBy(sel.value)||db.races[0];sel.value=r.id;let z=r.result||{};document.getElementById('reviewArea').innerHTML=`
+<label>確定着順（1〜3着の馬番）</label><div class="row"><input id="fin1" placeholder="1着" value="${esc(z.top3?.[0]||'')}"><input id="fin2" placeholder="2着" value="${esc(z.top3?.[1]||'')}"><input id="fin3" placeholder="3着" value="${esc(z.top3?.[2]||'')}"></div>
+<div class="row"><div><label>購入額合計（円）</label><input id="stake" type="number" min="0" value="${+z.stake||0}"></div><div><label>払戻額合計（円）</label><input id="returns" type="number" min="0" value="${+z.returns||0}"></div></div>
+<label class="checkrow"><input id="hit" type="checkbox" ${z.hit?'checked':''}> 3連複が的中した</label>
+<label>実際のペース・展開</label><textarea id="actualPace" placeholder="実際のラップ、隊列、馬場の伸び方">${esc(z.actualPace||'')}</textarea>
+<label>反省点（次回に活かすこと）</label><textarea id="lesson" placeholder="例：先行馬が多くハイペースを想定すべきだった">${esc(z.lesson||'')}</textarea>
+<button class="btn" onclick="saveResult()">結果・反省を保存</button>
+${z.top3?.length?`<div class="item"><strong>結果サマリー</strong><p>3連複的中：${z.hit?'はい':'いいえ'}｜購入 ${(+z.stake||0).toLocaleString()}円｜払戻 ${(+z.returns||0).toLocaleString()}円｜収支 ${((+z.returns||0)-(+z.stake||0)).toLocaleString()}円</p></div>`:''}`;
+let lessons=db.races.filter(x=>x.result?.lesson).slice().reverse();document.getElementById('lessons').innerHTML=lessons.length?lessons.map(x=>`<div class="item"><strong>${esc(x.name)} <span class="pill">${esc(x.date)}</span></strong><p>${esc(x.result.lesson)}</p></div>`).join(''):'<p class="empty">結果を保存すると、反省点がここに蓄積されます。</p>'}
+function saveResult(){let r=raceBy(document.getElementById('reviewRace').value);if(!r)return;r.result={top3:[v('fin1'),v('fin2'),v('fin3')].filter(Boolean),stake:+v('stake')||0,returns:+v('returns')||0,hit:document.getElementById('hit').checked,actualPace:v('actualPace'),lesson:v('lesson'),savedAt:new Date().toISOString()};save();alert('結果と反省点を保存しました')}
+document.getElementById('reviewRace').addEventListener('change',renderReview);
+function download(name,content,type){let blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+function exportData(){download('keiba-ai-lab-backup.json',JSON.stringify(db,null,2),'application/json')}
+function importData(){let f=document.getElementById('importFile').files[0];if(!f){alert('先にJSONファイルを選択してください');return}let rd=new FileReader();rd.onload=()=>{try{let x=JSON.parse(rd.result);if(!x||!Array.isArray(x.races))throw Error();if(confirm('現在のデータを読み込んだデータで置き換えます。よろしいですか？')){db=x;save();alert('復元しました')}}catch(e){alert('JSON形式が正しくありません')}};rd.readAsText(f)}
+function exportCSV(){let rows=[['date','race','track','distance','going','videoUrl','axis','second','third','top3','stake','returns','hit','lesson']];db.races.forEach(r=>rows.push([r.date,r.name,r.track,r.distance,r.going,r.videoUrl,(r.picks?.axis||[]).join(' '),(r.picks?.second||[]).join(' '),(r.picks?.third||[]).join(' '),(r.result?.top3||[]).join(' '),r.result?.stake||0,r.result?.returns||0,r.result?.hit?'yes':'no',r.result?.lesson||'']));let csv=rows.map(row=>row.map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');download('keiba-ai-lab.csv','\ufeff'+csv,'text/csv;charset=utf-8')}
+function clearData(){if(confirm('保存した全レース・予想・反省を削除します。バックアップはありますか？')&&confirm('本当にすべて削除しますか？')){db={races:[]};save()}}
+renderAll();
+</script>
+</body>
+</html>
