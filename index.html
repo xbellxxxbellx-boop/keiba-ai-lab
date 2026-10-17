@@ -69,7 +69,16 @@ a{color:var(--accent);word-break:break-all}.video-wrap{margin-top:12px;backgroun
  <div id="videoStatus" class="item"><p>動画ファイルを選ぶか、URLを入力してください。</p></div>
  <div id="videoPlayerWrap" class="video-wrap" hidden><video id="raceVideo" controls playsinline preload="metadata"></video></div>
  <div id="youtubeWrap" class="video-wrap" hidden><iframe id="youtubeFrame" title="YouTubeレース動画" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe><p class="muted">YouTube動画は埋め込み表示です。YouTubeの映像から直接静止画を抽出する機能はありません。</p></div>
- <div id="frameTools" hidden><label>確認する時間（秒）</label><div class="row"><input id="seekSeconds" type="number" min="0" step="0.5" value="0"><button class="btn secondary" type="button" id="seekBtn">指定位置へ移動</button></div><button class="btn" type="button" id="captureBtn">この場面を静止画にする</button><canvas id="frameCanvas" hidden></canvas><div id="frameResult"></div></div>
+ <div id="frameTools" hidden><label>確認する時間（秒）</label><div class="row"><input id="seekSeconds" type="number" min="0" step="0.5" value="0"><button class="btn secondary" type="button" id="seekBtn">指定位置へ移動</button></div><button class="btn" type="button" id="captureBtn">この場面を静止画にする</button>
+ <hr><h3>複数場面をまとめて抽出（次段階）</h3>
+ <p class="muted">動画の序盤から一定間隔でフレームを抜き出し、1枚の一覧画像にします。YouTube埋め込み映像からの抽出はできません。ローカル動画を推奨します。</p>
+ <div class="row"><div><label>抽出開始位置（秒）</label><input id="sampleStart" type="number" min="0" step="1" value="0"></div><div><label>抽出間隔（秒）</label><select id="sampleInterval"><option value="5">5秒</option><option value="10" selected>10秒</option><option value="15">15秒</option><option value="30">30秒</option></select></div><div><label>最大フレーム数</label><select id="sampleCount"><option value="6">6枚</option><option value="9" selected>9枚</option><option value="12">12枚</option><option value="16">16枚</option></select></div></div>
+ <button class="btn" type="button" id="sampleFramesBtn">一定間隔でフレーム抽出</button>
+ <div id="contactSheetResult"></div>
+ <button class="btn secondary" type="button" id="makePromptBtn">AI分析用の依頼文を作成</button>
+ <textarea id="aiPromptOutput" placeholder="作成した依頼文がここに表示されます" readonly></textarea>
+ <div class="row"><button class="btn secondary" type="button" id="copyPromptBtn">依頼文をコピー</button><button class="btn secondary" type="button" id="downloadPromptBtn">依頼文を保存</button></div>
+ <canvas id="contactCanvas" hidden></canvas><canvas id="frameCanvas" hidden></canvas><div id="frameResult"></div></div>
  </div>
  <div class="card"><h2>場面ごとの展開メモ</h2>
  <label>スタート〜序盤</label><textarea id="noteStart" placeholder="出遅れ、逃げ・先行争い、隊列"></textarea>
@@ -127,6 +136,37 @@ document.getElementById('loadUrlBtn').addEventListener('click',()=>{let raw=v('a
 document.getElementById('seekBtn').addEventListener('click',()=>{let video=document.getElementById('raceVideo');if(!video.src){setVideoStatus('先に動画ファイルまたは直接動画URLを読み込んでください。');return}let t=Math.max(0,Number(v('seekSeconds'))||0);if(Number.isFinite(video.duration))t=Math.min(t,Math.max(0,video.duration-0.1));video.currentTime=t;video.pause()});
 document.getElementById('raceVideo').addEventListener('loadedmetadata',()=>{document.getElementById('seekSeconds').max=Number.isFinite(document.getElementById('raceVideo').duration)?document.getElementById('raceVideo').duration:0});
 document.getElementById('captureBtn').addEventListener('click',()=>{let video=document.getElementById('raceVideo');if(!video.videoWidth||!video.videoHeight){setVideoStatus('動画を再生または読み込んでから、静止画にしたい場面で押してください。');return}let canvas=document.getElementById('frameCanvas');let maxW=960,scale=Math.min(1,maxW/video.videoWidth);canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);try{canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);let data=canvas.toDataURL('image/jpeg',0.86);let t=video.currentTime.toFixed(1);document.getElementById('frameResult').innerHTML='<div class="item"><strong>静止画｜'+esc(t)+'秒</strong><img class="frame-thumb" alt="動画から抽出した静止画" src="'+data+'"><p class="muted">静止画はこの画面で確認できます。画像を長押しして保存してください。URL動画は配信元のCORS設定により抽出できない場合があります。</p><button type="button" class="btn secondary" id="downloadFrame">静止画を保存</button></div>';document.getElementById('frameCanvas').hidden=true;document.getElementById('downloadFrame').onclick=()=>{let a=document.createElement('a');a.href=data;a.download='keiba-frame-'+t+'s.jpg';a.click()}}catch(e){setVideoStatus('この動画からは静止画を抽出できません。動画ファイルをiPhoneに保存して読み込む方法を試してください。')}});
+document.getElementById('sampleFramesBtn').addEventListener('click',async()=>{
+ const video=document.getElementById('raceVideo');
+ if(activeVideoKind==='youtube'||!video.src){setVideoStatus('複数フレーム抽出には、iPhone内の動画ファイルまたは抽出可能な直接動画URLを読み込んでください。YouTube URLは対象外です。');return}
+ if(!Number.isFinite(video.duration)||video.duration<=0){setVideoStatus('動画の読み込みが終わり、再生時間が表示されてから実行してください。');return}
+ const interval=Number(v('sampleInterval'))||10,limit=Number(v('sampleCount'))||9,startAt=Math.max(0,Number(v('sampleStart'))||0);
+ const times=[];for(let t=startAt;t<video.duration&&times.length<limit;t+=interval)times.push(t);
+ if(!times.length){setVideoStatus('抽出できる場面がありません。');return}
+ const oldTime=video.currentTime,wasPaused=video.paused;video.pause();
+ const cellW=320,cellH=220,cols=3,rows=Math.ceil(times.length/cols),canvas=document.getElementById('contactCanvas');canvas.width=cols*cellW;canvas.height=rows*cellH;
+ const ctx=canvas.getContext('2d');ctx.fillStyle='#101827';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.font='16px sans-serif';ctx.textBaseline='top';
+ const waitSeek=(t)=>new Promise((resolve,reject)=>{let done=false;const finish=(err)=>{if(done)return;done=true;video.removeEventListener('seeked',onSeek);video.removeEventListener('error',onErr);err?reject(err):resolve()};const onSeek=()=>finish();const onErr=()=>finish(new Error('動画をシークできません'));video.addEventListener('seeked',onSeek,{once:true});video.addEventListener('error',onErr,{once:true});try{video.currentTime=Math.min(t,Math.max(0,video.duration-0.05));if(Math.abs(video.currentTime-t)<0.05&&video.readyState>=2)setTimeout(()=>finish(),120)}catch(e){finish(e)}setTimeout(()=>finish(new Error('動画の読み込み待ちがタイムアウトしました')),4000)});
+ try{
+  for(let i=0;i<times.length;i++){
+   setVideoStatus('フレーム抽出中：'+(i+1)+' / '+times.length+'枚');await waitSeek(times[i]);
+   const x=(i%cols)*cellW,y=Math.floor(i/cols)*cellH;ctx.fillStyle='#101827';ctx.fillRect(x,y,cellW,cellH);
+   const scale=Math.min((cellW-12)/video.videoWidth,(cellH-38)/video.videoHeight);const w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale));
+   ctx.drawImage(video,x+(cellW-w)/2,y+26,w,h);ctx.fillStyle='#f4f7fb';ctx.fillText('動画 '+times[i].toFixed(1)+' 秒',x+8,y+5);
+  }
+  const data=canvas.toDataURL('image/jpeg',0.88);const r=raceBy(v('videoRace'));
+  document.getElementById('contactSheetResult').innerHTML='<div class="item"><strong>抽出一覧（'+times.length+'枚）</strong><img class="frame-thumb" style="max-width:100%" alt="一定間隔で抽出した動画フレーム一覧" src="'+data+'"><p class="muted">画像を保存し、AI分析用の依頼文と一緒にChatGPTへ添付すると、隊列や展開の確認に使えます。</p><button type="button" class="btn secondary" id="downloadContactSheet">一覧画像を保存</button></div>';
+  document.getElementById('downloadContactSheet').onclick=()=>{const a=document.createElement('a');a.href=data;a.download='keiba-contact-sheet.jpg';a.click()};setVideoStatus('抽出完了：'+times.length+'枚。動画全体の自動追跡ではなく、指定間隔の静止画一覧です。');
+ }catch(e){setVideoStatus('抽出に失敗しました。動画ファイルをiPhoneに保存して読み込む方法を試してください。直接URLでは配信元の制限で失敗することがあります。')}
+ finally{try{video.currentTime=oldTime;if(!wasPaused)video.play().catch(()=>{})}catch(e){}}
+});
+document.getElementById('makePromptBtn').addEventListener('click',()=>{
+ const r=raceBy(v('videoRace'));if(!r){setVideoStatus('先に対象レースを登録してください。');return}
+ const m=r.videoReview||{};const prompt=`あなたは日本競馬のレース映像を検証する分析者です。以下の情報と添付した動画フレーム一覧画像をもとに、確認できる事実と推測を分けて分析してください。画像だけで馬番・馬名を確実に特定できない場合は断定せず「特定不能」としてください。\n\n【レース】${r.name||''}\n【開催日】${r.date||''}\n【競馬場】${r.track||''}\n【距離・コース】${r.distance||''}\n【馬場】${r.going||''}\n【天候・当日の馬場メモ】${r.weather||''}\n【事前の展開仮説】${r.pace||''}\n\n【映像メモ】\nスタート〜序盤：${m.start||'未記入'}\n向正面：${m.backstretch||'未記入'}\n3〜4コーナー：${m.corner||'未記入'}\n直線〜ゴール：${m.finish||'未記入'}\n次走で狙いたい馬・反省点：${m.lesson||'未記入'}\n\n【分析してほしいこと】\n1. 各フレームから確認できる隊列・位置取り・ペースの手がかり（時刻を明記）\n2. 逃げ・先行争いとペースが有利不利に与えた影響\n3. 3〜4コーナーの進路取り、外を回った馬、直線の進路・伸び\n4. 展開が向かなかった可能性のある馬と、その根拠\n5. 次走で条件が変われば狙いたい馬／人気でも疑いたい馬\n6. 今回の展開予想で修正すべき点\n7. 確認できないこと・映像だけでは判断できないこと\n\n馬名や馬番を画像から無理に推定しないこと。フレーム間の動きを断定せず、時系列で見えた範囲と不確実性を明示してください。`;
+ document.getElementById('aiPromptOutput').value=prompt;document.getElementById('aiPromptOutput').focus();setVideoStatus('AI分析用の依頼文を作成しました。画像を保存し、依頼文をコピーしてChatGPTに画像と一緒に送ってください。');
+});
+document.getElementById('copyPromptBtn').addEventListener('click',async()=>{const t=v('aiPromptOutput');if(!t){setVideoStatus('先に「AI分析用の依頼文を作成」を押してください。');return}try{await navigator.clipboard.writeText(t);setVideoStatus('依頼文をコピーしました。ChatGPTの入力欄に貼り付けてください。')}catch(e){document.getElementById('aiPromptOutput').focus();document.getElementById('aiPromptOutput').select();setVideoStatus('自動コピーできませんでした。選択された文章を長押ししてコピーしてください。')}});
+document.getElementById('downloadPromptBtn').addEventListener('click',()=>{const t=v('aiPromptOutput');if(!t){setVideoStatus('先に「AI分析用の依頼文を作成」を押してください。');return}const blob=new Blob([t],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='keiba-ai-analysis-prompt.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 document.getElementById('videoRace').addEventListener('change',renderVideoForm);
 document.getElementById('saveVideoNotes').addEventListener('click',()=>{let r=raceBy(v('videoRace'));if(!r){alert('先にレースを登録してください');return}r.videoReview={start:v('noteStart'),backstretch:v('noteBackstretch'),corner:v('noteCorner'),finish:v('noteFinish'),lesson:v('noteLesson'),updatedAt:new Date().toISOString()};let url=v('analysisUrl').trim();if(url)r.videoUrl=url;save();alert('動画分析メモを保存しました')});
 function renderPred(){let sel=document.getElementById('predRace');if(!sel||!db.races.length){document.getElementById('predFormArea').innerHTML='<p class="empty">先にレースを登録してください。</p>';return}let r=raceBy(sel.value)||db.races[0];if(!r)return;sel.value=r.id;let p=r.picks||(r.picks={axis:[],second:[],third:[],budget:1000});document.getElementById('predFormArea').innerHTML=`
