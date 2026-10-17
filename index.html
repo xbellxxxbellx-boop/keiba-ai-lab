@@ -32,14 +32,14 @@ textarea{min-height:76px;resize:vertical}button{font:inherit;cursor:pointer}
 hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 .empty{color:var(--muted);padding:12px 0}.warning{border-left:3px solid var(--warn);padding:9px 11px;background:#2a2517;border-radius:7px;font-size:12px;color:#fce7a1}
 footer{position:fixed;bottom:0;left:0;right:0;background:#101827ed;border-top:1px solid var(--line);padding:9px 14px calc(9px + env(safe-area-inset-bottom));text-align:center;color:var(--muted);font-size:11px}
-a{color:var(--accent);word-break:break-all}
+a{color:var(--accent);word-break:break-all}.video-wrap{margin-top:12px;background:#05080e;border-radius:12px;overflow:hidden}.video-wrap video,.video-wrap iframe{display:block;width:100%;max-height:55vh;aspect-ratio:16/9;border:0;background:#05080e}#frameCanvas{width:100%;height:auto;border-radius:10px;margin-top:10px}.frame-thumb{width:100%;max-width:280px;border-radius:10px;margin-top:8px;border:1px solid var(--line)}
 @media(min-width:600px){.stats{grid-template-columns:repeat(4,minmax(0,1fr))}nav{justify-content:center}}
 </style>
 </head>
 <body>
 <header><h1>🏇 競馬AIラボ</h1><p>個人用プロトタイプ｜データはこのブラウザ内に保存</p></header>
 <nav id="nav">
-<button class="active" data-view="home">ホーム</button><button data-view="add">レース登録</button><button data-view="predict">予想・買い目</button><button data-view="review">結果・反省</button><button data-view="data">データ管理</button>
+<button class="active" data-view="home">ホーム</button><button data-view="add">レース登録</button><button data-view="video">動画分析</button><button data-view="predict">予想・買い目</button><button data-view="review">結果・反省</button><button data-view="data">データ管理</button>
 </nav>
 <main>
 <section id="home" class="view active">
@@ -57,6 +57,29 @@ a{color:var(--accent);word-break:break-all}
  <label>展開仮説</label><textarea id="pace" placeholder="逃げ候補、先行争い、想定ペース、差しが届く条件など"></textarea>
  <label>動画で確認したいこと</label><textarea id="videoNotes" placeholder="例：3〜4角の位置取り、直線の進路、失速した馬"></textarea>
  <button class="btn" type="submit">レースを保存</button></form></div>
+</section>
+<section id="video" class="view">
+ <div class="card"><h2>🎞️ 動画分析ラボ</h2>
+ <p class="muted">iPhoneに保存した動画、またはURLを読み込み、重要場面を確認して静止画を取り出せます。映像から馬番・馬名・動きを自動追跡するAI機能はまだ未接続です。</p>
+ <label>対象レース</label><select id="videoRace"></select>
+ <label>動画ファイル（iPhoneの「写真」や「ファイル」から選択）</label><input type="file" id="videoFile" accept="video/*">
+ <p class="muted">動画ファイルはこの画面内で再生します。サーバーにはアップロードしません。大きな動画は読み込みに時間がかかる場合があります。</p>
+ <label>動画URL（YouTubeまたは直接動画リンク）</label><input id="analysisUrl" type="url" placeholder="https://www.youtube.com/watch?v=... または mp4のURL">
+ <button class="btn" id="loadUrlBtn" type="button">URLを読み込む</button>
+ <div id="videoStatus" class="item"><p>動画ファイルを選ぶか、URLを入力してください。</p></div>
+ <div id="videoPlayerWrap" class="video-wrap" hidden><video id="raceVideo" controls playsinline preload="metadata"></video></div>
+ <div id="youtubeWrap" class="video-wrap" hidden><iframe id="youtubeFrame" title="YouTubeレース動画" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe><p class="muted">YouTube動画は埋め込み表示です。YouTubeの映像から直接静止画を抽出する機能はありません。</p></div>
+ <div id="frameTools" hidden><label>確認する時間（秒）</label><div class="row"><input id="seekSeconds" type="number" min="0" step="0.5" value="0"><button class="btn secondary" type="button" id="seekBtn">指定位置へ移動</button></div><button class="btn" type="button" id="captureBtn">この場面を静止画にする</button><canvas id="frameCanvas" hidden></canvas><div id="frameResult"></div></div>
+ </div>
+ <div class="card"><h2>場面ごとの展開メモ</h2>
+ <label>スタート〜序盤</label><textarea id="noteStart" placeholder="出遅れ、逃げ・先行争い、隊列"></textarea>
+ <label>向正面</label><textarea id="noteBackstretch" placeholder="ペース、折り合い、位置取りの変化"></textarea>
+ <label>3〜4コーナー</label><textarea id="noteCorner" placeholder="仕掛けのタイミング、外を回した馬、進路"></textarea>
+ <label>直線〜ゴール</label><textarea id="noteFinish" placeholder="伸びた馬、止まった馬、進路・不利の有無"></textarea>
+ <label>次走で狙いたい馬・反省点</label><textarea id="noteLesson" placeholder="展開が向かなかった馬、次走で条件が変われば狙いたい馬"></textarea>
+ <button class="btn" id="saveVideoNotes" type="button">分析メモをレース記録に保存</button>
+ <p class="muted">保存先はこのSafariのローカル領域です。大切なデータは「データ管理」からJSONバックアップしてください。</p>
+ </div>
 </section>
 <section id="predict" class="view">
  <div class="card"><h2>予想・3連複買い目</h2><label>対象レース</label><select id="predRace"></select><div id="predFormArea"><p class="empty">先にレースを登録してください。</p></div></div>
@@ -82,7 +105,7 @@ function load(){try{return JSON.parse(localStorage.getItem(KEY))||{races:[]}}cat
 function save(){localStorage.setItem(KEY,JSON.stringify(db));renderAll()}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===id));if(id==='predict')renderPred();if(id==='review')renderReview();window.scrollTo(0,0)}
+function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===id));if(id==='predict')renderPred();if(id==='review')renderReview();if(id==='video')renderVideoForm();window.scrollTo(0,0)}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>show(b.dataset.view));
 document.getElementById('raceDate').value=new Date().toISOString().slice(0,10);
 document.getElementById('raceForm').addEventListener('submit',e=>{e.preventDefault();db.races.unshift({id:uid(),name:v('raceName'),date:v('raceDate'),track:v('track'),distance:v('distance'),going:v('going'),videoUrl:v('videoUrl'),weather:v('weather'),pace:v('pace'),videoNotes:v('videoNotes'),horses:[],picks:{axis:[],second:[],third:[],budget:1000},result:{},created:new Date().toISOString()});save();e.target.reset();document.getElementById('raceDate').value=new Date().toISOString().slice(0,10);show('predict')});
@@ -90,9 +113,22 @@ function v(id){return document.getElementById(id).value}
 function raceBy(id){return db.races.find(r=>r.id===id)}
 function options(selected){return db.races.map(r=>`<option value="${r.id}" ${r.id===selected?'selected':''}>${esc(r.date)}｜${esc(r.name)}</option>`).join('')}
 function setOptions(id,prev){let s=document.getElementById(id),old=prev||s.value;s.innerHTML=db.races.length?options(old):'<option value="">レースがありません</option>';if(!raceBy(s.value)&&db.races[0])s.value=db.races[0].id}
-function renderAll(){renderHome();setOptions('predRace');setOptions('reviewRace');renderPred();renderReview()}
+function renderAll(){renderHome();setOptions('predRace');setOptions('reviewRace');setOptions('videoRace');renderPred();renderReview();if(document.getElementById('video').classList.contains('active'))renderVideoForm()}
 function renderHome(){let all=db.races,done=all.filter(r=>r.result&&r.result.top3&&r.result.top3.length>=3),hits=done.filter(r=>r.result.hit===true),stake=done.reduce((a,r)=>a+(+r.result.stake||0),0),returns=done.reduce((a,r)=>a+(+r.result.returns||0),0);document.getElementById('stats').innerHTML=`<div class="stat"><small>登録レース</small><strong>${all.length}</strong></div><div class="stat"><small>結果入力済</small><strong>${done.length}</strong></div><div class="stat"><small>3連複的中率</small><strong>${done.length?(hits.length/done.length*100).toFixed(1):'—'}%</strong></div><div class="stat"><small>回収率</small><strong>${stake?(returns/stake*100).toFixed(1):'—'}%</strong></div>`;document.getElementById('recent').innerHTML=all.length?all.slice(0,5).map(r=>`<div class="item"><strong>${esc(r.name)} <span class="pill">${esc(r.date)}</span></strong><p>${esc(r.track)} ${esc(r.distance)}｜馬場：${esc(r.going)}</p><button class="btn secondary" onclick="openRace('${r.id}','predict')">予想を開く</button></div>`).join(''):'<p class="empty">まだレースがありません。最初のレースを登録してください。</p>'}
 function openRace(id,view){document.getElementById(view==='predict'?'predRace':'reviewRace').value=id;show(view)}
+let activeVideoUrl='';let activeVideoKind='';let localVideoObjectUrl='';
+function renderVideoForm(){setOptions('videoRace');let r=raceBy(v('videoRace'));if(!r){document.getElementById('videoStatus').innerHTML='<p>先に「レース登録」からレースを登録してください。</p>';return}document.getElementById('analysisUrl').value=r.videoUrl||'';let m=r.videoReview||{};document.getElementById('noteStart').value=m.start||'';document.getElementById('noteBackstretch').value=m.backstretch||'';document.getElementById('noteCorner').value=m.corner||'';document.getElementById('noteFinish').value=m.finish||'';document.getElementById('noteLesson').value=m.lesson||'';}
+function setVideoStatus(msg){document.getElementById('videoStatus').innerHTML='<p>'+esc(msg)+'</p>'}
+function hidePlayers(){document.getElementById('videoPlayerWrap').hidden=true;document.getElementById('youtubeWrap').hidden=true;document.getElementById('frameTools').hidden=true;}
+function youtubeId(raw){try{let u=new URL(raw);if(u.hostname==='youtu.be')return u.pathname.slice(1).split('/')[0];if(u.hostname.includes('youtube.com')){if(u.pathname==='/watch')return u.searchParams.get('v');let m=u.pathname.match(/\/(embed|shorts|live)\/([^/?]+)/);return m?m[2]:null}}catch(e){}return null}
+function useVideoFile(file){if(!file)return;if(!file.type.startsWith('video/')){setVideoStatus('このファイルは動画形式として認識できません。');return}if(localVideoObjectUrl)URL.revokeObjectURL(localVideoObjectUrl);localVideoObjectUrl=URL.createObjectURL(file);activeVideoUrl=localVideoObjectUrl;activeVideoKind='file';hidePlayers();let video=document.getElementById('raceVideo');video.crossOrigin='';video.src=localVideoObjectUrl;document.getElementById('videoPlayerWrap').hidden=false;document.getElementById('frameTools').hidden=false;document.getElementById('frameResult').innerHTML='';setVideoStatus('動画ファイルを読み込みました：'+file.name+'。再生して場面を選んでください。');video.load();}
+document.getElementById('videoFile').addEventListener('change',e=>useVideoFile(e.target.files&&e.target.files[0]));
+document.getElementById('loadUrlBtn').addEventListener('click',()=>{let raw=v('analysisUrl').trim();if(!raw){setVideoStatus('先に動画URLを入力してください。');return}let r=raceBy(v('videoRace'));if(r){r.videoUrl=raw;save()}let yid=youtubeId(raw);hidePlayers();document.getElementById('frameResult').innerHTML='';if(yid){activeVideoKind='youtube';activeVideoUrl=raw;document.getElementById('youtubeFrame').src='https://www.youtube-nocookie.com/embed/'+encodeURIComponent(yid);document.getElementById('youtubeWrap').hidden=false;setVideoStatus('YouTubeを埋め込み表示します。動画によっては投稿者の設定により再生できない場合があります。YouTube映像からの静止画抽出はできません。')}else if(/^https?:\/\//i.test(raw)&&/\.(mp4|webm|ogv|mov)(\?|#|$)/i.test(raw)){activeVideoKind='remote';activeVideoUrl=raw;let video=document.getElementById('raceVideo');video.removeAttribute('crossorigin');video.src=raw;document.getElementById('videoPlayerWrap').hidden=false;document.getElementById('frameTools').hidden=false;video.load();setVideoStatus('直接動画リンクとして読み込みます。配信元の設定によっては再生や静止画抽出ができない場合があります。')}else{setVideoStatus('このURLはYouTube形式として認識されないか、直接動画リンクではありません。ページを開くことはできますが、映像の取り込み・静止画抽出はできません。URLを確認してください。')}});
+document.getElementById('seekBtn').addEventListener('click',()=>{let video=document.getElementById('raceVideo');if(!video.src){setVideoStatus('先に動画ファイルまたは直接動画URLを読み込んでください。');return}let t=Math.max(0,Number(v('seekSeconds'))||0);if(Number.isFinite(video.duration))t=Math.min(t,Math.max(0,video.duration-0.1));video.currentTime=t;video.pause()});
+document.getElementById('raceVideo').addEventListener('loadedmetadata',()=>{document.getElementById('seekSeconds').max=Number.isFinite(document.getElementById('raceVideo').duration)?document.getElementById('raceVideo').duration:0});
+document.getElementById('captureBtn').addEventListener('click',()=>{let video=document.getElementById('raceVideo');if(!video.videoWidth||!video.videoHeight){setVideoStatus('動画を再生または読み込んでから、静止画にしたい場面で押してください。');return}let canvas=document.getElementById('frameCanvas');let maxW=960,scale=Math.min(1,maxW/video.videoWidth);canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);try{canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);let data=canvas.toDataURL('image/jpeg',0.86);let t=video.currentTime.toFixed(1);document.getElementById('frameResult').innerHTML='<div class="item"><strong>静止画｜'+esc(t)+'秒</strong><img class="frame-thumb" alt="動画から抽出した静止画" src="'+data+'"><p class="muted">静止画はこの画面で確認できます。画像を長押しして保存してください。URL動画は配信元のCORS設定により抽出できない場合があります。</p><button type="button" class="btn secondary" id="downloadFrame">静止画を保存</button></div>';document.getElementById('frameCanvas').hidden=true;document.getElementById('downloadFrame').onclick=()=>{let a=document.createElement('a');a.href=data;a.download='keiba-frame-'+t+'s.jpg';a.click()}}catch(e){setVideoStatus('この動画からは静止画を抽出できません。動画ファイルをiPhoneに保存して読み込む方法を試してください。')}});
+document.getElementById('videoRace').addEventListener('change',renderVideoForm);
+document.getElementById('saveVideoNotes').addEventListener('click',()=>{let r=raceBy(v('videoRace'));if(!r){alert('先にレースを登録してください');return}r.videoReview={start:v('noteStart'),backstretch:v('noteBackstretch'),corner:v('noteCorner'),finish:v('noteFinish'),lesson:v('noteLesson'),updatedAt:new Date().toISOString()};let url=v('analysisUrl').trim();if(url)r.videoUrl=url;save();alert('動画分析メモを保存しました')});
 function renderPred(){let sel=document.getElementById('predRace');if(!sel||!db.races.length){document.getElementById('predFormArea').innerHTML='<p class="empty">先にレースを登録してください。</p>';return}let r=raceBy(sel.value)||db.races[0];if(!r)return;sel.value=r.id;let p=r.picks||(r.picks={axis:[],second:[],third:[],budget:1000});document.getElementById('predFormArea').innerHTML=`
 <label>出走馬（1行に1頭：「馬番,馬名,評価,穴馬理由」）</label><textarea id="horsesInput" placeholder="5,サンプルホース,軸,展開と能力が合う&#10;8,サンプルスター,相手,先行力あり&#10;12,穴サンプル,穴,ハイペースなら浮上">${esc((r.horses||[]).map(h=>[h.no,h.name,h.rank,h.reason].join(',')).join('\\n'))}</textarea>
 <button class="btn secondary" onclick="saveHorses()">馬リストを保存</button>
