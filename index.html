@@ -183,11 +183,11 @@ document.getElementById('saveVideoNotes').addEventListener('click',()=>{let r=ra
 document.getElementById('saveVerification').addEventListener('click',()=>{let r=raceBy(v('videoRace'));if(!r){alert('先にレースを登録してください');return}r.verification={actualPace:v('actualPace'),advantagedHorses:v('advantagedHorses'),disadvantagedHorses:v('disadvantagedHorses'),positionEvidence:v('positionEvidence'),predictionGap:v('predictionGap'),nextRule:v('nextRule'),updatedAt:new Date().toISOString()};save();document.getElementById('verificationStatus').textContent='保存しました：'+new Date(r.verification.updatedAt).toLocaleString('ja-JP');alert('展開検証を保存しました');});
 function renderPred(){let sel=document.getElementById('predRace');if(!sel||!db.races.length){document.getElementById('predFormArea').innerHTML='<p class="empty">先にレースを登録してください。</p>';return}let r=raceBy(sel.value)||db.races[0];if(!r)return;sel.value=r.id;let p=r.picks||(r.picks={axis:[],second:[],third:[],budget:1000});document.getElementById('predFormArea').innerHTML=`
 <h3>📷 出走表スクショから馬名を読み取る</h3>
-<p class="muted">スクリーンショットを拡大・コントラスト調整してOCRにかけ、単勝オッズの行を手がかりに馬名候補を抽出します。馬番が画像から読めない場合は表示順から仮番を付けるため、保存前に必ず確認してください。</p>
+<p class="muted">スクリーンショットから馬名候補を抽出します。次の画面で馬番・馬名を確認・修正してから出走馬欄へ反映します。馬番はOCRで確認できない場合、仮番号として表示されます。</p>
 <label>出走表のスクリーンショット</label><input id="raceScreenshot" type="file" accept="image/*">
 <button class="btn" type="button" onclick="ocrRaceScreenshot()">スクショを読み取る</button><div id="ocrStatus" class="muted" aria-live="polite"></div>
 <label>読み取った文字（必要なら修正）</label><textarea id="ocrRawText" placeholder="スクショを読み取ると認識した文字が表示されます"></textarea>
-<button class="btn secondary" type="button" onclick="makeHorseDraftFromOCR()">文字から出走馬リストを作成</button>
+<button class="btn secondary" type="button" onclick="makeHorseDraftFromOCR()">文字から出走馬候補を作成</button><div id="ocrReviewArea"></div>
 <p class="muted">画像はサーバーに送らず、ブラウザ内で処理します。OCRエンジン・日本語データの初回読み込みには通信が必要です。認識が悪い場合は、出走馬一覧部分だけを拡大して撮った画像を使ってください。</p>
 <hr><label>出走馬（1行に1頭：「馬番,馬名,評価,穴馬理由」）</label><textarea id="horsesInput" placeholder="5,サンプルホース,軸,展開と能力が合う&#10;8,サンプルスター,相手,先行力あり&#10;12,穴サンプル,穴,ハイペースなら浮上">${esc((r.horses||[]).map(h=>[h.no,h.name,h.rank,h.reason].join(',')).join('\n'))}</textarea>
 <button class="btn secondary" onclick="saveHorses()">馬リストを保存</button>
@@ -221,44 +221,25 @@ function makeHorseDraftFromOCR(){
  const lines=raw.split(/\n+/).map(x=>x.replace(/[|｜]/g,' ').replace(/[※☆★◆◇●○▲△◎×]/g,' ').replace(/\s+/g,' ').trim()).filter(Boolean);
  const candidates=[],seenNames=new Set();
  const uiWords=/^(予想|オッズ|購入|データ|分析|結果|払戻|馬名|馬体重|騎手|人気|単勝|調教|映像|コメント|総合スコア|切替|京都|芝|右|左|晴|曇|良|稍|重|不良|牝|牡|セ|年齢|馬番|馬|斤量)$/;
- const jockeys=/^(横山和|横山武|横山典|横山琉|富田|冨田|武豊|坂井|西村淳|荻野極|田山|戸崎圭?|佐々木|岩田康|岩田望|北村友|ルメール|Ｃ?ルメール|松山|浜中|吉田隼|今村|川田|菅原明|丹内|団野|岩田望来|鮫島克|池添|藤岡佑|藤岡康|幸|和田竜|小沢|原優介|三浦|津村|大野|石川|丸山|秋山稔|松若|国分恭|国分優|古川吉|古川奈|永島|角田河|角田大河|西塚|斎藤新|吉村|高杉|北村宏|内田博|石橋脩|Ｍデムーロ|デムーロ|田辺|菱田|小崎|吉田豊|丸田|柴田善|柴田大|木幡巧|木幡育|木幡初|原田和|黛|杉原|小林脩|小林勝|小林美|大野拓弥|横山和生)$/;
- function validName(rawName){let n=cleanHorseName(rawName).replace(/\s+/g,' ').trim();n=n.replace(/^(?:\d{1,2}|\d{1,2}番|\(?\d{1,2}\)?)[.、,：:\- ]*/,'').trim();if(n.length<3||n.length>20||uiWords.test(n)||jockeys.test(n)||/^(?:\d|人気|番人気)/.test(n))return '';if(!/[ァ-ヶー]/.test(n))return '';if(/(牝|牡|セ)\s*\d/.test(n))return '';return n}
+ const jockeys=/^(横山和|横山武|横山典|横山琉|富田|冨田|武豊|坂井|西村淳|荻野極|田山|戸崎圭?|佐々木|岩田康|岩田望|北村友|ルメール|Ｃ?ルメール|松山|浜中|吉田隼|今村|川田|菅原明|丹内|団野|鮫島克|池添|藤岡佑|藤岡康|幸|和田竜|小沢|原優介|三浦|津村|大野|石川|丸山|秋山稔|松若|国分恭|国分優|古川吉|古川奈|永島|角田河|角田大河|西塚|斎藤新|吉村|高杉|北村宏|内田博|石橋脩|田辺|菱田|小崎|吉田豊|丸田|柴田善|柴田大|木幡巧|木幡育|木幡初|原田和|黛|杉原|小林脩|小林勝|小林美|大野拓弥|横山和生)$/;
+ function validName(rawName){let n=cleanHorseName(rawName).replace(/\s+/g,' ').trim();n=n.replace(/^(?:\d{1,2}|\d{1,2}番|\(?\d{1,2}\)?)[.、,：:\- ]*/,'').trim();if(n.length<3||n.length>22||uiWords.test(n)||jockeys.test(n)||/^(?:\d|人気|番人気)/.test(n))return '';if(!/[ァ-ヶー]/.test(n))return '';if(/(牝|牡|セ)\s*\d/.test(n))return '';if(/(?:単勝|オッズ|購入|馬体重|総合スコア|データ分析|結果払戻)/.test(n))return '';return n}
  function addName(n){n=validName(n);if(!n)return;if(seenNames.has(n))return;seenNames.add(n);candidates.push(n)}
- // 1) 同じ行に「馬名 + 単勝オッズ」がある場合。オッズより前だけを馬名候補にする。
- for(let i=0;i<lines.length;i++){
-   const line=lines[i];
-   const m=line.match(/^(.*?)\s+(\d{1,3}(?:\.\d{1,2})?)(?:\s|$)/);
-   if(m){const before=m[1].replace(/^[^一-龯々ぁ-んァ-ヶーA-Za-z]+/,'').trim();addName(before)}
- }
- // 2) 馬名とオッズが別行なら、オッズ行の直前の行を優先する。
- if(candidates.length<5){
-   for(let i=0;i<lines.length;i++){
-     if(!/(?:^|\s)\d{1,3}(?:\.\d{1,2})?(?:\s|$)/.test(lines[i]))continue;
-     const same=lines[i].match(/([一-龯々ぁ-んァ-ヶーA-Za-z][一-龯々ぁ-んァ-ヶーA-Za-z・ー\s]{1,24}?)\s+\d{1,3}(?:\.\d{1,2})?(?:\s|$)/);
-     if(same)addName(same[1]);
-     if(!same&&i>0){
-       for(let j=i-1;j>=Math.max(0,i-3);j--){
-         const prev=lines[j].replace(/^[^一-龯々ぁ-んァ-ヶーA-Za-z]+/,'').trim();
-         const n=validName(prev);
-         if(n){addName(n);break}
-       }
-     }
-   }
- }
- // 3) OCRがオッズ行を分断した場合は、馬名らしい行を拾う。騎手名・UI文言は除外。
- if(candidates.length<5){
-   for(const line of lines){
-     let t=line.replace(/\b\d{1,3}(?:\.\d{1,2})?\b/g,' ').replace(/\d+\s*人気/g,' ').replace(/牝\s*\d+|牡\s*\d+|セ\s*\d+/g,' ').replace(/\s+/g,' ').trim();
-     t=t.replace(/^(?:\d{1,2}|\d{1,2}番)[\s.、,：:\-]*/,'');
-     addName(t);
-   }
- }
- if(!candidates.length){alert('馬名候補を抽出できませんでした。認識文字欄にある馬名とオッズの行を確認してください。');return}
- const found=candidates.slice(0,18).map((name,i)=>`${i+1},${name},相手,`);
- document.getElementById('horsesInput').value=found.join('\n');
- document.getElementById('ocrStatus').textContent=`馬名候補を${found.length}頭作成しました。OCRは馬番と馬名を誤認識する場合があります。出走表と照合し、特に馬名・馬番・頭数を確認してから保存してください。`;
- document.getElementById('horsesInput').scrollIntoView({behavior:'smooth',block:'center'});
+ // Prefer the name immediately before a decimal odds value.
+ for(const line of lines){const m=line.match(/^(.*?)\s+(\d{1,3}(?:\.\d{1,2})?)(?:\s|$)/);if(m){addName(m[1].replace(/^[^一-龯々ぁ-んァ-ヶーA-Za-z]+/,'').trim())}}
+ // If OCR splits name and odds into separate lines, look back a few lines.
+ if(candidates.length<5){for(let i=0;i<lines.length;i++){if(!/(?:^|\s)\d{1,3}(?:\.\d{1,2})?(?:\s|$)/.test(lines[i]))continue;let same=lines[i].match(/([一-龯々ぁ-んァ-ヶーA-Za-z][一-龯々ぁ-んァ-ヶーA-Za-z・ー\s]{1,26}?)\s+\d{1,3}(?:\.\d{1,2})?(?:\s|$)/);if(same)addName(same[1]);else for(let j=i-1;j>=Math.max(0,i-3);j--){const n=validName(lines[j].replace(/^[^一-龯々ぁ-んァ-ヶーA-Za-z]+/,'').trim());if(n){addName(n);break}}}}
+ // Last-resort candidates from text lines; remove jockeys and UI terms.
+ if(candidates.length<5){for(const line of lines){let t=line.replace(/\b\d{1,3}(?:\.\d{1,2})?\b/g,' ').replace(/\d+\s*人気/g,' ').replace(/牝\s*\d+|牡\s*\d+|セ\s*\d+/g,' ').replace(/\s+/g,' ').trim();t=t.replace(/^(?:\d{1,2}|\d{1,2}番)[\s.、,：:\-]*/,'');addName(t)}}
+ if(!candidates.length){alert('馬名候補を抽出できませんでした。認識文字欄の馬名・オッズを確認してください。');return}
+ const headMatch=raw.match(/(\d{1,2})\s*頭/);const expected=headMatch?+headMatch[1]:null;
+ const area=document.getElementById('ocrReviewArea');
+ area.innerHTML=`<div class="item"><h3>抽出候補の確認・修正</h3><p class="muted">馬番は自動確定できていません。実際の出走表に合わせて、左の馬番と馬名を確認してね。誤認識はこの場で直せます。</p><div class="row"><div><label>出走頭数（画像からの推定）</label><input id="ocrExpectedCount" type="number" min="1" max="18" value="${expected||candidates.length}"></div><div><label>抽出できた候補</label><input id="ocrFoundCount" value="${candidates.length}頭" readonly></div></div><div id="ocrCountWarning" class="warning"></div><div id="ocrCandidateRows">${candidates.slice(0,18).map((name,i)=>`<div class="row" style="align-items:end;margin:8px 0"><div style="max-width:86px"><label>馬番</label><input class="ocrHorseNo" type="number" min="1" max="18" value="${i+1}"></div><div style="flex:1"><label>馬名</label><input class="ocrHorseName" value="${esc(name)}"></div><button class="btn secondary" type="button" onclick="this.closest('.row').remove();updateOcrCountWarning()">除外</button></div>`).join('')}</div><button class="btn" type="button" onclick="confirmOcrHorseDraft()">確認した馬を出走馬欄に反映</button></div>`;
+ updateOcrCountWarning();
+ document.getElementById('ocrStatus').textContent=`${candidates.length}頭の候補を作成しました。馬番・馬名を確認してから反映してください。`;
+ area.scrollIntoView({behavior:'smooth',block:'start'});
 }
+function updateOcrCountWarning(){const expected=+(document.getElementById('ocrExpectedCount')?.value||0);const found=document.querySelectorAll('#ocrCandidateRows .row').length;const warn=document.getElementById('ocrCountWarning');if(!warn)return;warn.textContent=expected&&found!==expected?`注意：出走頭数は${expected}頭、候補は${found}頭です。${found<expected?`${expected-found}頭不足しています。OCR文字欄を確認して候補を追加するか、画像を分けて読み取ってください。`:`候補が${found-expected}頭多いため、不要な行を除外してください。`}`:'頭数が一致しています。馬番・馬名は実際の出走表と照合してください。';}
+function confirmOcrHorseDraft(){const rows=[...document.querySelectorAll('#ocrCandidateRows .row')];const seen=new Set(),out=[];for(const row of rows){const no=(row.querySelector('.ocrHorseNo')?.value||'').trim();const name=(row.querySelector('.ocrHorseName')?.value||'').trim();if(!name)continue;if(!no||+no<1||+no>18){alert(`「${name}」の馬番を1〜18で入力してください。`);return}if(seen.has(no)){alert(`馬番${no}が重複しています。修正してください。`);return}seen.add(no);out.push(`${no},${name},相手,`)}if(!out.length){alert('出走馬候補がありません。');return}const expected=+(document.getElementById('ocrExpectedCount')?.value||0);if(expected&&out.length!==expected&&!confirm(`出走頭数は${expected}頭ですが、反映する候補は${out.length}頭です。このまま反映しますか？`))return;document.getElementById('horsesInput').value=out.join('\n');document.getElementById('ocrStatus').textContent=`${out.length}頭を出走馬欄に反映しました。内容を確認して「馬リストを保存」を押してください。`;document.getElementById('horsesInput').scrollIntoView({behavior:'smooth',block:'center'});}
 function saveHorses(){let r=raceBy(document.getElementById('predRace').value);if(!r)return;r.horses=document.getElementById('horsesInput').value.split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{let [no,name,rank,reason]=line.split(',');return {no:(no||'').trim(),name:(name||'').trim(),rank:(rank||'').trim(),reason:(reason||'').trim()}});if(r.factorScores){const valid=new Set(r.horses.map(h=>String(h.no)));Object.keys(r.factorScores).forEach(no=>{if(!valid.has(no))delete r.factorScores[no]})}save();alert('馬リストを保存しました')}
 function savePicks(){let r=raceBy(document.getElementById('predRace').value);if(!r)return;r.picks={axis:parseNos('axis'),second:parseNos('second'),third:parseNos('third'),budget:+v('budget')||0,unit:+v('unit')||100};save();document.getElementById('combos').innerHTML=comboSummary(r)}
 function saveReasoning(){let r=raceBy(document.getElementById('predRace').value);if(r){r.reasoning=v('reasoning');save();alert('予想根拠を保存しました')}}
