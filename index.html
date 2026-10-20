@@ -249,11 +249,35 @@ function makeHorseDraftFromOCR(){
  const headMatch=raw.match(/(\d{1,2})\s*頭/);const expected=headMatch?+headMatch[1]:null;
  const area=document.getElementById('ocrReviewArea');
  area.innerHTML=`<div class="item"><h3>抽出候補の確認・修正</h3><p class="muted">馬番は画像から確実に読み取れていません。出走表の並び順が正しいと確認できる場合は「抽出順に仮番号を入力」を使えます。仮番号は必ず実際の出走表と照合してください。</p><div class="row"><div><label>出走頭数（画像からの推定）</label><input id="ocrExpectedCount" type="number" min="1" max="18" value="${expected||candidates.length}"></div><div><label>抽出できた候補</label><input id="ocrFoundCount" value="${candidates.length}頭" readonly></div></div><div id="ocrCountWarning" class="warning"></div><div id="ocrCandidateRows">${candidates.slice(0,18).map((name,i)=>`<div class="item ocrCandidate" style="margin:10px 0"><div class="row" style="align-items:end"><div style="max-width:86px"><label>馬番</label><input class="ocrHorseNo" type="number" min="1" max="18" value="" placeholder="要確認"></div><div style="flex:1"><label>馬名</label><input class="ocrHorseName" value="${esc(name)}"></div><button class="btn secondary" type="button" onclick="this.closest('.ocrCandidate').remove();updateOcrCountWarning()">除外</button></div><div class="row"><div><label>騎手</label><input class="ocrJockey" placeholder="騎手名"></div><div><label>斤量（kg）</label><input class="ocrWeight" type="number" min="40" max="70" step="0.5" placeholder="例 55"></div><div><label>単勝オッズ</label><input class="ocrOdds" type="number" min="1" max="9999" step="0.1" placeholder="例 12.5"></div></div></div>`).join('')}</div><div class="row" style="margin-top:10px"><button class="btn secondary" type="button" onclick="fillOcrNumbersInOrder()">抽出順に仮番号を入力</button><button class="btn secondary" type="button" onclick="addOcrCandidateRow()">不足している馬を追加</button><button class="btn" type="button" onclick="confirmOcrHorseDraft()">確認した馬を出走馬欄に反映</button></div></div>`;
+ autoFillOcrMetadata(lines);
  updateOcrCountWarning();
  document.querySelectorAll('#ocrCandidateRows .ocrHorseNo,#ocrCandidateRows .ocrHorseName').forEach(el=>el.addEventListener('input',updateOcrCountWarning));
  document.getElementById('ocrExpectedCount')?.addEventListener('input',updateOcrCountWarning);
  document.getElementById('ocrStatus').textContent=`${candidates.length}頭の候補を作成しました。馬番・馬名を確認してから反映してください。`;
  area.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function autoFillOcrMetadata(lines){
+ // Fill only values that can be read with reasonable confidence; leave ambiguous fields blank.
+ const jockeyNames=['横山和','横山武','横山典','横山琉','富田','冨田','武豊','坂井','西村淳','荻野極','田山','戸崎圭','戸崎','佐々木','岩田康','岩田望','北村友','ルメール','Ｃルメール','松山','浜中','吉田隼','川田','菅原明','丹内','団野','鮫島克','池添','藤岡佑','藤岡康','幸','和田竜','小沢','原優介','三浦','津村','大野','石川','丸山','松若','田辺','菱田','吉村','高杉','北村宏','内田博','石橋脩','丸田','柴田善','木幡巧'];
+ const norm=s=>(s||'').replace(/[\s　]/g,'').replace(/[|｜]/g,'');
+ const rows=[...document.querySelectorAll('#ocrCandidateRows .ocrCandidate')];
+ const usedLines=new Set();
+ rows.forEach(row=>{
+  const name=row.querySelector('.ocrHorseName')?.value||''; if(!name)return;
+  const n=norm(name); let idx=-1,best=0;
+  lines.forEach((line,i)=>{const l=norm(line);if(l.includes(n)||n.includes(l)&&l.length>=4){const score=Math.min(l.length,n.length);if(score>best){best=score;idx=i}}});
+  if(idx<0){const first=n.slice(0,Math.min(5,n.length));lines.forEach((line,i)=>{if(idx<0&&first.length>=4&&norm(line).includes(first))idx=i})}
+  if(idx<0)return;
+  // Restrict to nearby lines, preferring unclaimed lines and the closest occurrence.
+  const nearby=[];for(let d=0;d<=5;d++){for(const j of (d===0?[idx]:[idx-d,idx+d]))if(j>=0&&j<lines.length)nearby.push({j,d,line:lines[j]})}
+  const weightInput=row.querySelector('.ocrWeight');
+  if(weightInput&&!weightInput.value){const candidates=nearby.filter(x=>/(?:4[0-9]|5[0-9]|6[0-9])\.0/.test(x.line)||/(?:4[0-9]|5[0-9])\.5/.test(x.line));const w=candidates.find(x=>!usedLines.has(x.j));if(w){const m=w.line.match(/((?:4[0-9]|5[0-9]|6[0-9])(?:\.0|\.5))/);if(m){weightInput.value=m[1];usedLines.add(w.j)}}}
+  const jockeyInput=row.querySelector('.ocrJockey');
+  if(jockeyInput&&!jockeyInput.value){let match=null;for(const x of nearby){const found=jockeyNames.find(j=>norm(x.line).includes(norm(j)));if(found&&!usedLines.has(x.j)){match={name:found,j:x.j};break}}if(match){jockeyInput.value=match.name;usedLines.add(match.j)}}
+  const oddsInput=row.querySelector('.ocrOdds');
+  if(oddsInput&&!oddsInput.value){const opts=nearby.filter(x=>/\d{1,3}\.\d{1,2}/.test(x.line)).map(x=>({ ...x, value:Number(x.line.match(/(\d{1,3}\.\d{1,2})/)[1]) })).filter(x=>x.value>=1&&x.value<=999);const o=opts.find(x=>!usedLines.has(x.j));if(o){oddsInput.value=o.value;usedLines.add(o.j)}}
+ });
 }
 function fillOcrNumbersInOrder(){const rows=[...document.querySelectorAll("#ocrCandidateRows .row")];const expected=+(document.getElementById("ocrExpectedCount")?.value||0);if(!rows.length){alert("先にスクショを読み取ってください。");return}if(expected&&rows.length!==expected){alert(`出走頭数は${expected}頭、候補は${rows.length}頭です。頭数が一致していないため仮番号は入力しません。不要な候補を除外するか、不足分を追加してください。`);return}if(!confirm("抽出順が実際の出走表の馬番順と一致している場合だけ使用してください。1頭でも抜け・余分な候補があると、以降の番号がずれます。抽出順に1番から仮番号を入力しますか？"))return;rows.forEach((row,i)=>{const input=row.querySelector(".ocrHorseNo");if(input)input.value=String(i+1)});updateOcrCountWarning();alert("仮番号を入力しました。登録前に各馬の馬番と馬名を実際の出走表と照合してください。")}
 function updateOcrCountWarning(){const expected=+(document.getElementById('ocrExpectedCount')?.value||0);const rows=[...document.querySelectorAll('#ocrCandidateRows .row')];const found=rows.length;const named=rows.filter(row=>(row.querySelector('.ocrHorseName')?.value||'').trim()).length;const count=document.getElementById('ocrFoundCount');if(count)count.value=`${found}行（馬名入力済み${named}頭）`;const warn=document.getElementById('ocrCountWarning');if(!warn)return;warn.textContent=expected&&found!==expected?`注意：出走頭数は${expected}頭、候補行は${found}行です。${found<expected?`${expected-found}頭分の行が不足しています。「不足している馬を追加」を押して馬番・馬名を入力してください。`:`候補行が${found-expected}行多いため、不要な行を除外してください。`}`:rows.some(row=>!(row.querySelector('.ocrHorseName')?.value||'').trim())?'頭数は一致していますが、馬名が空欄の行があります。馬名を入力してから反映してください。':'頭数が一致しています。馬番・馬名は実際の出走表と照合してください。';}
