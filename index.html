@@ -183,7 +183,7 @@ document.getElementById('saveVideoNotes').addEventListener('click',()=>{let r=ra
 document.getElementById('saveVerification').addEventListener('click',()=>{let r=raceBy(v('videoRace'));if(!r){alert('先にレースを登録してください');return}r.verification={actualPace:v('actualPace'),advantagedHorses:v('advantagedHorses'),disadvantagedHorses:v('disadvantagedHorses'),positionEvidence:v('positionEvidence'),predictionGap:v('predictionGap'),nextRule:v('nextRule'),updatedAt:new Date().toISOString()};save();document.getElementById('verificationStatus').textContent='保存しました：'+new Date(r.verification.updatedAt).toLocaleString('ja-JP');alert('展開検証を保存しました');});
 function renderPred(){let sel=document.getElementById('predRace');if(!sel||!db.races.length){document.getElementById('predFormArea').innerHTML='<p class="empty">先にレースを登録してください。</p>';return}let r=raceBy(sel.value)||db.races[0];if(!r)return;sel.value=r.id;let p=r.picks||(r.picks={axis:[],second:[],third:[],budget:1000});document.getElementById('predFormArea').innerHTML=`
 <h3>📷 出走表スクショから馬名を読み取る</h3>
-<p class="muted">スクリーンショットから馬名候補を抽出します。馬番・馬名に加えて、騎手・斤量・単勝オッズも確認表で編集できます。OCR結果は必ず実際の出走表と照合してください。</p>
+<p class="muted">スクリーンショットを全体OCRした後、出走馬を1行ずつ再認識し、馬番・馬名・騎手・斤量・単勝オッズを候補入力します。誤認識は残るため、保存前に必ず照合してください。</p>
 <label>出走表のスクリーンショット</label><input id="raceScreenshot" type="file" accept="image/*">
 <button class="btn" type="button" onclick="ocrRaceScreenshot()">スクショを読み取る</button><div id="ocrStatus" class="muted" aria-live="polite"></div>
 <label>読み取った文字（必要なら修正）</label><textarea id="ocrRawText" placeholder="スクショを読み取ると認識した文字が表示されます"></textarea>
@@ -213,7 +213,94 @@ function comboSummary(r){let c=combos(r.picks||{}),unit=+(r.picks?.unit||100);re
 let tesseractLoaderPromise=null;
 function loadTesseract(){if(window.Tesseract)return Promise.resolve(window.Tesseract);if(tesseractLoaderPromise)return tesseractLoaderPromise;tesseractLoaderPromise=new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';s.onload=()=>window.Tesseract?resolve(window.Tesseract):reject(new Error('OCRライブラリを読み込めませんでした'));s.onerror=()=>reject(new Error('OCRライブラリの読み込みに失敗しました。通信環境を確認してください。'));document.head.appendChild(s)});return tesseractLoaderPromise}
 function preprocessRaceImage(file){return new Promise((resolve,reject)=>{const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{try{const scale=Math.min(3,Math.max(2,1800/Math.max(img.naturalWidth,img.naturalHeight)));const c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*scale);c.height=Math.round(img.naturalHeight*scale);const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,c.width,c.height);const im=ctx.getImageData(0,0,c.width,c.height);for(let i=0;i<im.data.length;i+=4){const gray=im.data[i]*.299+im.data[i+1]*.587+im.data[i+2]*.114;const v=gray>180?255:gray<100?0:Math.round((gray-100)*3.1875);im.data[i]=im.data[i+1]=im.data[i+2]=v;}ctx.putImageData(im,0,0);c.toBlob(blob=>{URL.revokeObjectURL(url);if(blob)resolve(blob);else reject(new Error('画像の前処理に失敗しました'))},'image/png')}catch(e){URL.revokeObjectURL(url);reject(e)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('画像を開けませんでした'))};img.src=url})}
-async function ocrRaceScreenshot(){const file=document.getElementById('raceScreenshot')?.files?.[0];const status=document.getElementById('ocrStatus');if(!file){status.textContent='先に出走表のスクリーンショットを選択してください。';return}if(!file.type.startsWith('image/')){status.textContent='画像ファイルを選んでください。';return}status.textContent='画像を拡大して読み取り準備中…';let worker;try{const T=await loadTesseract();const prepared=await preprocessRaceImage(file);status.textContent='日本語と数字を読み取っています…';worker=await T.createWorker('jpn+eng',1,{logger:m=>{if(m.status==='recognizing text')status.textContent=`文字を読み取り中… ${Math.round((m.progress||0)*100)}%`}});try{await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:T.PSM?.SPARSE_TEXT??11})}catch(e){}const result=await worker.recognize(prepared);await worker.terminate();worker=null;document.getElementById('ocrRawText').value=(result.data.text||'').trim();status.textContent='読み取り完了。次に「文字から出走馬リストを作成」を押してください。馬番は候補作成後に確認してください。'}catch(e){if(worker)try{await worker.terminate()}catch(_){}status.textContent='読み取りに失敗しました：'+(e?.message||e)+'。通信環境を確認し、出走馬一覧部分を拡大した画像で再度お試しください。'}}
+async function ocrRaceScreenshot(){
+ const file=document.getElementById('raceScreenshot')?.files?.[0];
+ const status=document.getElementById('ocrStatus');
+ if(!file){status.textContent='先に出走表のスクリーンショットを選択してください。';return}
+ if(!file.type.startsWith('image/')){status.textContent='画像ファイルを選んでください。';return}
+ status.textContent='画像を読み込み中…';
+ let worker, objectUrl;
+ try{
+  const T=await loadTesseract();
+  const img=new Image(); objectUrl=URL.createObjectURL(file);
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('画像を開けませんでした'));img.src=objectUrl});
+  const W=img.naturalWidth,H=img.naturalHeight;
+  const fullCanvas=document.createElement('canvas');
+  const scale=Math.min(3,Math.max(2,1800/Math.max(W,H)));
+  fullCanvas.width=Math.round(W*scale);fullCanvas.height=Math.round(H*scale);
+  fullCanvas.getContext('2d').drawImage(img,0,0,fullCanvas.width,fullCanvas.height);
+  const fullBlob=await new Promise(resolve=>fullCanvas.toBlob(resolve,'image/png'));
+  status.textContent='出走表全体を読み取り、頭数と行位置を確認しています…';
+  worker=await T.createWorker('jpn+eng',1,{logger:m=>{if(m.status==='recognizing text')status.textContent=`文字を読み取り中… ${Math.round((m.progress||0)*100)}%`;}});
+  try{await worker.setParameters({preserve_interword_spaces:'1',tessedit_pageseg_mode:T.PSM?.SPARSE_TEXT??11})}catch(e){}
+  const full=await worker.recognize(fullBlob);
+  const raw=(full.data.text||'').trim();
+  document.getElementById('ocrRawText').value=raw;
+  const countMatch=raw.match(/(\d{1,2})\s*頭/);
+  let expected=countMatch?Number(countMatch[1]):null;
+  if(!expected||expected<5||expected>18){
+   const entered=window.prompt('画像から出走頭数を確定できませんでした。出走表に表示されている頭数を入力してください（例：17）','17');
+   expected=entered?Number(entered):null;
+  }
+  // Locate the first odds token in the odds column. Its vertical position anchors the first horse row.
+  let firstOddsY=null;
+  const words=full.data.words||[];
+  for(const w of words){
+   const txt=(w.text||'').replace(/[^\d.]/g,'');
+   const x0=(w.bbox?.x0||0)/scale, y0=(w.bbox?.y0||0)/scale;
+   if(x0>W*0.62 && /^\d{1,3}\.\d{1,2}$/.test(txt) && y0<H*0.6){firstOddsY=y0;break}
+  }
+  if(!expected || expected<5 || expected>18){
+   await worker.terminate();worker=null;
+   window.__ocrStructuredRows=null;
+   status.textContent='全体の文字認識は完了しましたが、出走頭数を特定できませんでした。認識文字を確認してください。';
+   return;
+  }
+  if(firstOddsY===null){
+   await worker.terminate();worker=null;
+   window.__ocrStructuredRows=null;
+   status.textContent='全体の文字認識は完了しましたが、オッズ欄から行の開始位置を特定できませんでした。出走馬一覧部分だけを切り取った画像で再試行してください。';
+   return;
+  }
+  const firstRowY=Math.max(0,firstOddsY-25);
+  const rowHeight=(H-firstRowY)/expected;
+  const structured=[];
+  for(let i=0;i<expected;i++){
+   status.textContent=`馬ごとに読み取り中… ${i+1}/${expected}`;
+   const y0=Math.max(0,Math.floor(firstRowY+i*rowHeight));
+   const y1=Math.min(H,Math.floor(firstRowY+(i+1)*rowHeight));
+   const rowCanvas=document.createElement('canvas');
+   rowCanvas.width=W*2;rowCanvas.height=Math.max(1,(y1-y0)*2);
+   const ctx=rowCanvas.getContext('2d');
+   ctx.fillStyle='#fff';ctx.fillRect(0,0,rowCanvas.width,rowCanvas.height);
+   ctx.drawImage(img,0,y0,W,y1-y0,0,0,rowCanvas.width,rowCanvas.height);
+   const rowBlob=await new Promise(resolve=>rowCanvas.toBlob(resolve,'image/png'));
+   const rr=await worker.recognize(rowBlob);
+   const lines=(rr.data.text||'').split(/\n+/).map(x=>x.replace(/[|｜]/g,' ').replace(/\s+/g,' ').trim()).filter(Boolean);
+   const joined=lines.join(' ');
+   const oddsMatch=joined.match(/\b(\d{1,3}\.\d{1,2})\b/);
+   const weightMatch=joined.match(/\b((?:4[0-9]|5[0-9]|6[0-9])(?:\.0|\.5))\b/);
+   const jockeyList=['横山和','横山武','横山典','横山琉','富田','冨田','武豊','坂井','西村淳','荻野極','田山','戸崎圭','戸崎','佐々木','岩田康','岩田望','北村友','ルメール','松山','浜中','吉田隼','川田','菅原明','丹内','団野','鮫島克','池添','藤岡佑','藤岡康','幸','和田竜','小沢','原優介','三浦','津村','大野','石川','丸山','松若','田辺','菱田','吉村','高杉','北村宏','内田博','石橋脩','丸田','柴田善','木幡巧'];
+   const jockey=jockeyList.find(j=>joined.replace(/\s/g,'').includes(j.replace(/\s/g,'')))||'';
+   let before=oddsMatch?joined.slice(0,oddsMatch.index):joined;
+   before=before.replace(/^\s*(?:(?:\d{1,2})\s*)?[\-—|)」\]のS5]*\s*/,'')
+    .replace(/(?:牝|牡|セ)\s*\d+.*$/,'')
+    .replace(/^[^一-龯々ぁ-んァ-ヶー]+/,'').trim();
+   // Horse names in this layout are the first blue-name-like text before the odds.
+   let name=cleanHorseName(before);
+   name=name.replace(/(?:27\.3|65\.9|14\.3|23\.5|60\.7|11\.0|149\.4|1\.5|52\.4|178\.5|32\.0|15\.2|8\.7|33\.2|120\.4|30\.0|71\.8).*$/,'');
+   name=name.replace(/\s+/g,'').trim();
+   if(!/[ァ-ヶー]/.test(name)||name.length<3||name.length>22||/^(予想|馬名|オッズ|京都|通常|新聞)$/.test(name))name='';
+   structured.push({no:String(i+1),name,jockey,weight:weightMatch?weightMatch[1]:'',odds:oddsMatch?oddsMatch[1]:''});
+  }
+  await worker.terminate();worker=null;
+  window.__ocrStructuredRows=structured;
+  status.textContent=`全体OCRと行ごとのOCRが完了しました。${structured.length}行を確認表に作成できます。馬名・騎手・斤量・オッズを確認してください。`;
+ }catch(e){
+  if(worker)try{await worker.terminate()}catch(_){}
+  status.textContent='読み取りに失敗しました：'+(e?.message||e)+'。通信環境を確認してください。';
+ }finally{if(objectUrl)URL.revokeObjectURL(objectUrl)}
+}
 function cleanHorseName(s){return (s||'').replace(/[|｜()[\]{}<>「」『』:：;；*☆★◆◇●○▲△◎×+＝=]/g,' ').replace(/\b(?:牡|牝|セ)\s*\d*\b/g,' ').replace(/\s+/g,' ').trim().replace(/^[^一-龯々ぁ-んァ-ヶー]+/,'').replace(/[^一-龯々ぁ-んァ-ヶー・ー\s]+$/,'').replace(/\s+/g,'')}
 function makeHorseDraftFromOCR(){
  const raw=document.getElementById('ocrRawText')?.value||'';
@@ -245,11 +332,16 @@ function makeHorseDraftFromOCR(){
  }
  // Last-resort candidates from text lines; remove jockeys and UI terms.
  if(candidates.length<5){for(const line of lines){let t=line.replace(/\b\d{1,3}(?:\.\d{1,2})?\b/g,' ').replace(/\d+\s*人気/g,' ').replace(/牝\s*\d+|牡\s*\d+|セ\s*\d+/g,' ').replace(/\s+/g,' ').trim();t=t.replace(/^(?:\d{1,2}|\d{1,2}番)[\s.、,：:\-]*/,'');addName(t)}}
+ const structured=Array.isArray(window.__ocrStructuredRows)?window.__ocrStructuredRows:null;
+ if(structured&&structured.length){
+   candidates.length=0;seenNames.clear();
+   structured.forEach(r=>{const n=validName(r.name||'');if(n){seenNames.add(n);candidates.push(n)}else{candidates.push('')}})
+ }
  if(!candidates.length){alert('馬名候補を抽出できませんでした。認識文字欄の馬名・オッズを確認してください。');return}
  const headMatch=raw.match(/(\d{1,2})\s*頭/);const expected=headMatch?+headMatch[1]:null;
  const area=document.getElementById('ocrReviewArea');
- area.innerHTML=`<div class="item"><h3>抽出候補の確認・修正</h3><p class="muted">馬番は画像から確実に読み取れていません。出走表の並び順が正しいと確認できる場合は「抽出順に仮番号を入力」を使えます。仮番号は必ず実際の出走表と照合してください。</p><div class="row"><div><label>出走頭数（画像からの推定）</label><input id="ocrExpectedCount" type="number" min="1" max="18" value="${expected||candidates.length}"></div><div><label>抽出できた候補</label><input id="ocrFoundCount" value="${candidates.length}頭" readonly></div></div><div id="ocrCountWarning" class="warning"></div><div id="ocrCandidateRows">${candidates.slice(0,18).map((name,i)=>`<div class="item ocrCandidate" style="margin:10px 0"><div class="row" style="align-items:end"><div style="max-width:86px"><label>馬番</label><input class="ocrHorseNo" type="number" min="1" max="18" value="" placeholder="要確認"></div><div style="flex:1"><label>馬名</label><input class="ocrHorseName" value="${esc(name)}"></div><button class="btn secondary" type="button" onclick="this.closest('.ocrCandidate').remove();updateOcrCountWarning()">除外</button></div><div class="row"><div><label>騎手</label><input class="ocrJockey" placeholder="騎手名"></div><div><label>斤量（kg）</label><input class="ocrWeight" type="number" min="40" max="70" step="0.5" placeholder="例 55"></div><div><label>単勝オッズ</label><input class="ocrOdds" type="number" min="1" max="9999" step="0.1" placeholder="例 12.5"></div></div></div>`).join('')}</div><div class="row" style="margin-top:10px"><button class="btn secondary" type="button" onclick="fillOcrNumbersInOrder()">抽出順に仮番号を入力</button><button class="btn secondary" type="button" onclick="addOcrCandidateRow()">不足している馬を追加</button><button class="btn" type="button" onclick="confirmOcrHorseDraft()">確認した馬を出走馬欄に反映</button></div></div>`;
- autoFillOcrMetadata(lines);
+ area.innerHTML=`<div class="item"><h3>抽出候補の確認・修正</h3><p class="muted">馬番は画像から確実に読み取れていません。出走表の並び順が正しいと確認できる場合は「抽出順に仮番号を入力」を使えます。仮番号は必ず実際の出走表と照合してください。</p><div class="row"><div><label>出走頭数（画像からの推定）</label><input id="ocrExpectedCount" type="number" min="1" max="18" value="${expected||candidates.length}"></div><div><label>抽出できた候補</label><input id="ocrFoundCount" value="${candidates.length}頭" readonly></div></div><div id="ocrCountWarning" class="warning"></div><div id="ocrCandidateRows">${candidates.slice(0,18).map((name,i)=>{const sr=structured&&structured[i]||{};return `<div class="item ocrCandidate" style="margin:10px 0"><div class="row" style="align-items:end"><div style="max-width:86px"><label>馬番</label><input class="ocrHorseNo" type="number" min="1" max="18" value="${structured&&structured.length===Number(expected||structured.length)?esc(sr.no||''):''}" placeholder="要確認"></div><div style="flex:1"><label>馬名</label><input class="ocrHorseName" value="${esc(name)}"></div><button class="btn secondary" type="button" onclick="this.closest('.ocrCandidate').remove();updateOcrCountWarning()">除外</button></div><div class="row"><div><label>騎手</label><input class="ocrJockey" value="${esc(sr.jockey||'')}" placeholder="騎手名"></div><div><label>斤量（kg）</label><input class="ocrWeight" type="number" min="40" max="70" step="0.5" value="${esc(sr.weight||'')}" placeholder="例 55"></div><div><label>単勝オッズ</label><input class="ocrOdds" type="number" min="1" max="9999" step="0.1" value="${esc(sr.odds||'')}" placeholder="例 12.5"></div></div></div>`}).join('')}</div><div class="row" style="margin-top:10px"><button class="btn secondary" type="button" onclick="fillOcrNumbersInOrder()">抽出順に仮番号を入力</button><button class="btn secondary" type="button" onclick="addOcrCandidateRow()">不足している馬を追加</button><button class="btn" type="button" onclick="confirmOcrHorseDraft()">確認した馬を出走馬欄に反映</button></div></div>`;
+ if(!structured)autoFillOcrMetadata(lines);
  updateOcrCountWarning();
  document.querySelectorAll('#ocrCandidateRows .ocrHorseNo,#ocrCandidateRows .ocrHorseName').forEach(el=>el.addEventListener('input',updateOcrCountWarning));
  document.getElementById('ocrExpectedCount')?.addEventListener('input',updateOcrCountWarning);
