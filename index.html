@@ -182,7 +182,11 @@ document.getElementById('videoRace').addEventListener('change',renderVideoForm);
 document.getElementById('saveVideoNotes').addEventListener('click',()=>{let r=raceBy(v('videoRace'));if(!r){alert('先にレースを登録してください');return}r.videoReview={start:v('noteStart'),backstretch:v('noteBackstretch'),corner:v('noteCorner'),finish:v('noteFinish'),lesson:v('noteLesson'),updatedAt:new Date().toISOString()};let url=v('analysisUrl').trim();if(url)r.videoUrl=url;save();alert('動画分析メモを保存しました')});
 document.getElementById('saveVerification').addEventListener('click',()=>{let r=raceBy(v('videoRace'));if(!r){alert('先にレースを登録してください');return}r.verification={actualPace:v('actualPace'),advantagedHorses:v('advantagedHorses'),disadvantagedHorses:v('disadvantagedHorses'),positionEvidence:v('positionEvidence'),predictionGap:v('predictionGap'),nextRule:v('nextRule'),updatedAt:new Date().toISOString()};save();document.getElementById('verificationStatus').textContent='保存しました：'+new Date(r.verification.updatedAt).toLocaleString('ja-JP');alert('展開検証を保存しました');});
 function renderPred(){let sel=document.getElementById('predRace');if(!sel||!db.races.length){document.getElementById('predFormArea').innerHTML='<p class="empty">先にレースを登録してください。</p>';return}let r=raceBy(sel.value)||db.races[0];if(!r)return;sel.value=r.id;let p=r.picks||(r.picks={axis:[],second:[],third:[],budget:1000});document.getElementById('predFormArea').innerHTML=`
-<h3>📷 出走表スクショから馬名を読み取る</h3>
+<h3>📥 ChatGPTで作成した出走馬JSONを取り込む</h3>
+<p class="muted">スクショをこのアプリ内でOCRせず、ChatGPTで作成した出走馬JSONを選ぶと、馬番・馬名・騎手・斤量・単勝オッズを出走馬欄に反映します。既存データ全体は置き換えません。反映後に内容を確認し「馬リストを保存」を押してください。</p>
+<label>出走馬JSONファイル</label><input id="horseJsonFile" type="file" accept=".json,application/json">
+<button class="btn" type="button" onclick="importHorseJson()">出走馬JSONを読み込む</button><div id="horseJsonStatus" class="muted" aria-live="polite"></div>
+<hr><h3>📷 出走表スクショから馬名を読み取る</h3>
 <p class="muted">スクリーンショットを全体OCRした後、出走馬を1行ずつ再認識し、馬番・馬名・騎手・斤量・単勝オッズを候補入力します。誤認識は残るため、保存前に必ず照合してください。</p>
 <label>出走表のスクリーンショット</label><input id="raceScreenshot" type="file" accept="image/*">
 <button class="btn" type="button" onclick="ocrRaceScreenshot()">スクショを読み取る</button><div id="ocrStatus" class="muted" aria-live="polite"></div>
@@ -375,6 +379,45 @@ function fillOcrNumbersInOrder(){const rows=[...document.querySelectorAll("#ocrC
 function updateOcrCountWarning(){const expected=+(document.getElementById('ocrExpectedCount')?.value||0);const rows=[...document.querySelectorAll('#ocrCandidateRows .row')];const found=rows.length;const named=rows.filter(row=>(row.querySelector('.ocrHorseName')?.value||'').trim()).length;const count=document.getElementById('ocrFoundCount');if(count)count.value=`${found}行（馬名入力済み${named}頭）`;const warn=document.getElementById('ocrCountWarning');if(!warn)return;warn.textContent=expected&&found!==expected?`注意：出走頭数は${expected}頭、候補行は${found}行です。${found<expected?`${expected-found}頭分の行が不足しています。「不足している馬を追加」を押して馬番・馬名を入力してください。`:`候補行が${found-expected}行多いため、不要な行を除外してください。`}`:rows.some(row=>!(row.querySelector('.ocrHorseName')?.value||'').trim())?'頭数は一致していますが、馬名が空欄の行があります。馬名を入力してから反映してください。':'頭数が一致しています。馬番・馬名は実際の出走表と照合してください。';}
 function addOcrCandidateRow(){const area=document.getElementById('ocrCandidateRows');if(!area)return;const expected=+(document.getElementById('ocrExpectedCount')?.value||18);const rows=[...area.querySelectorAll('.row')];if(rows.length>=18){alert('最大18頭まで追加できます。');return}const used=new Set(rows.map(row=>+(row.querySelector('.ocrHorseNo')?.value||0)));let no=1;while(used.has(no)&&no<=18)no++;const row=document.createElement('div');row.className='row';row.style.cssText='align-items:end;margin:8px 0';row.innerHTML=`<div style="max-width:86px"><label>馬番</label><input class="ocrHorseNo" type="number" min="1" max="18" value="${no<=18?no:''}"></div><div style="flex:1"><label>馬名（追加分）</label><input class="ocrHorseName" placeholder="正確な馬名を入力"></div><button class="btn secondary" type="button" onclick="this.closest('.row').remove();updateOcrCountWarning()">除外</button>`;area.appendChild(row);row.querySelector('.ocrHorseName').addEventListener('input',updateOcrCountWarning);row.querySelector('.ocrHorseNo').addEventListener('input',updateOcrCountWarning);updateOcrCountWarning();row.scrollIntoView({behavior:'smooth',block:'center'});}
 function confirmOcrHorseDraft(){const rows=[...document.querySelectorAll('#ocrCandidateRows .row')];const seen=new Set(),out=[];for(const row of rows){const no=(row.querySelector('.ocrHorseNo')?.value||'').trim();const name=(row.querySelector('.ocrHorseName')?.value||'').trim();if(!name){alert('馬名が空欄の行があります。不要な行は「除外」、必要な馬は馬名を入力してください。');return}if(!no||+no<1||+no>18){alert(`「${name}」の実際の馬番を1〜18で入力してください。抽出順から番号を自動決定しません。`);return}if(seen.has(no)){alert(`馬番${no}が重複しています。出走表と照合して修正してください。`);return}seen.add(no);const jockey=(row.querySelector('.ocrJockey')?.value||'').trim();const weight=(row.querySelector('.ocrWeight')?.value||'').trim();const odds=(row.querySelector('.ocrOdds')?.value||'').trim();out.push(`${no},${name},相手,,${jockey},${weight},${odds}`)}if(!out.length){alert('出走馬候補がありません。');return}const expected=+(document.getElementById('ocrExpectedCount')?.value||0);if(expected&&out.length!==expected){alert(`出走頭数は${expected}頭ですが、反映候補は${out.length}頭です。頭数を一致させてから反映してください。`);return}if(expected&&seen.size!==expected){alert('馬番が揃っていません。実際の出走表と照合してください。');return}document.getElementById('horsesInput').value=out.join('\n');document.getElementById('ocrStatus').textContent=`${out.length}頭を出走馬欄に反映しました。内容を確認して「馬リストを保存」を押してください。`;document.getElementById('horsesInput').scrollIntoView({behavior:'smooth',block:'center'});}
+function importHorseJson(){
+ const file=document.getElementById('horseJsonFile')?.files?.[0];
+ const status=document.getElementById('horseJsonStatus');
+ if(!file){status.textContent='先にJSONファイルを選択してください。';return}
+ const reader=new FileReader();
+ reader.onload=()=>{
+  try{
+   const data=JSON.parse(reader.result);
+   const horses=Array.isArray(data)?data:data.horses;
+   if(!Array.isArray(horses)||!horses.length)throw new Error('horses配列が見つからないか、空です');
+   const seen=new Set(); const lines=[];
+   for(const h of horses){
+    const no=String(h.no??h.horseNo??'').trim();
+    const name=String(h.name??h.horseName??'').trim();
+    if(!/^\d{1,2}$/.test(no)||+no<1||+no>18)throw new Error('馬番が1〜18の数字ではありません：'+(name||'馬名不明'));
+    if(!name)throw new Error('馬名が空欄の馬番があります：'+no);
+    if(seen.has(no))throw new Error('馬番'+no+'が重複しています');
+    seen.add(no);
+    const rank=String(h.rank||'相手').trim();
+    const reason=String(h.reason||'').trim();
+    const jockey=String(h.jockey||'').trim();
+    const weight=String(h.weight??h.carriedWeight??'').trim();
+    const odds=String(h.odds??h.winOdds??'').trim();
+    const safe=[no,name,rank,reason,jockey,weight,odds].map(x=>String(x).replace(/,/g,'，'));
+    lines.push(safe.join(','));
+   }
+   lines.sort((a,b)=>Number(a.split(',')[0])-Number(b.split(',')[0]));
+   const expected=Number(data.expectedCount||data.race?.expectedCount||0);
+   if(expected&&horses.length!==expected){status.textContent=`JSONは${horses.length}頭、指定頭数は${expected}頭です。内容を確認してください。`;
+   }else{status.textContent=`${horses.length}頭を読み込みました。馬番・馬名・騎手・斤量・オッズを確認してから保存してください。`}
+   const area=document.getElementById('horsesInput');
+   if(!area)throw new Error('出走馬欄が見つかりません。先にレースを登録してください。');
+   area.value=lines.join('\n'); area.scrollIntoView({behavior:'smooth',block:'center'});
+   if(expected&&horses.length!==expected)status.textContent+=` 不足/過剰があるため、保存前に頭数を合わせてください。`;
+  }catch(e){status.textContent='読み込みできませんでした：'+(e.message||'JSON形式を確認してください')}
+ };
+ reader.onerror=()=>status.textContent='ファイルを読み込めませんでした。';
+ reader.readAsText(file);
+}
 function saveHorses(){let r=raceBy(document.getElementById('predRace').value);if(!r)return;r.horses=document.getElementById('horsesInput').value.split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{let [no,name,rank,reason,jockey,weight,odds]=line.split(',');return {no:(no||'').trim(),name:(name||'').trim(),rank:(rank||'').trim(),reason:(reason||'').trim(),jockey:(jockey||'').trim(),weight:(weight||'').trim(),odds:(odds||'').trim()}});if(r.factorScores){const valid=new Set(r.horses.map(h=>String(h.no)));Object.keys(r.factorScores).forEach(no=>{if(!valid.has(no))delete r.factorScores[no]})}save();alert('馬リストを保存しました')}
 function savePicks(){let r=raceBy(document.getElementById('predRace').value);if(!r)return;r.picks={axis:parseNos('axis'),second:parseNos('second'),third:parseNos('third'),budget:+v('budget')||0,unit:+v('unit')||100};save();document.getElementById('combos').innerHTML=comboSummary(r)}
 function saveReasoning(){let r=raceBy(document.getElementById('predRace').value);if(r){r.reasoning=v('reasoning');save();alert('予想根拠を保存しました')}}
