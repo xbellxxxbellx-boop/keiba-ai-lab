@@ -246,56 +246,75 @@ async function ocrRaceScreenshot(){
    const entered=window.prompt('画像から出走頭数を確定できませんでした。出走表に表示されている頭数を入力してください（例：17）','17');
    expected=entered?Number(entered):null;
   }
-  // Locate the first odds token in the odds column. Its vertical position anchors the first horse row.
-  let firstOddsY=null;
+  // Detect each decimal odd in the right-hand odds column and use its Y position
+  // as the anchor for that horse's row. Do not divide the remaining page height
+  // evenly: screenshots include headers, navigation, and unequal margins.
   const words=full.data.words||[];
+  const anchors=[];
   for(const w of words){
-   const txt=(w.text||'').replace(/[^\d.]/g,'');
-   const x0=(w.bbox?.x0||0)/scale, y0=(w.bbox?.y0||0)/scale;
-   if(x0>W*0.62 && /^\d{1,3}\.\d{1,2}$/.test(txt) && y0<H*0.6){firstOddsY=y0;break}
+   const token=(w.text||'').replace(/,/g,'.').replace(/[^\d.]/g,'');
+   const x0=(w.bbox?.x0||0)/scale, y0=(w.bbox?.y0||0)/scale, y1=(w.bbox?.y1||w.bbox?.y0||0)/scale;
+   const val=Number(token);
+   if(x0>W*0.62 && /^\d{1,3}\.\d{1,2}$/.test(token) && val>=1 && val<=999){
+    anchors.push({y:(y0+y1)/2,odds:token});
+   }
+  }
+  anchors.sort((a,b)=>a.y-b.y);
+  const rowAnchors=[];
+  for(const a of anchors){
+   const last=rowAnchors[rowAnchors.length-1];
+   if(last && Math.abs(a.y-last.y)<Math.max(12,H*0.012)){
+    // Prefer the token that looks like a normal decimal odds value if OCR found duplicates.
+    if(a.odds.length>last.odds.length)last.odds=a.odds;
+   }else rowAnchors.push({...a});
   }
   if(!expected || expected<5 || expected>18){
-   await worker.terminate();worker=null;
-   window.__ocrStructuredRows=null;
-   status.textContent='全体の文字認識は完了しましたが、出走頭数を特定できませんでした。認識文字を確認してください。';
-   return;
+   await worker.terminate();worker=null;window.__ocrStructuredRows=null;
+   status.textContent='全体の文字認識は完了しましたが、出走頭数を特定できませんでした。認識文字を確認してください。';return;
   }
-  if(firstOddsY===null){
-   await worker.terminate();worker=null;
-   window.__ocrStructuredRows=null;
-   status.textContent='全体の文字認識は完了しましたが、オッズ欄から行の開始位置を特定できませんでした。出走馬一覧部分だけを切り取った画像で再試行してください。';
-   return;
+  // Usually the odds column contains exactly one decimal value per runner.
+  // If OCR found extra decimal values in the header, retain the bottommost expected rows.
+  const selected=rowAnchors.length>expected?rowAnchors.slice(-expected):rowAnchors;
+  if(selected.length!==expected){
+   await worker.terminate();worker=null;window.__ocrStructuredRows=null;
+   status.textContent=`オッズ欄から馬の行を${selected.length}行しか特定できませんでした（想定${expected}頭）。出走馬一覧だけを切り取った画像で再試行してください。`;return;
   }
-  const firstRowY=Math.max(0,firstOddsY-25);
-  const rowHeight=(H-firstRowY)/expected;
   const structured=[];
-  for(let i=0;i<expected;i++){
+  const jockeyList=['横山和','横山武','横山典','横山琉','富田','冨田','武豊','坂井','西村淳','荻野極','田山','戸崎圭','戸崎','佐々木','岩田康','岩田望','北村友','ルメール','松山','浜中','吉田隼','川田','菅原明','丹内','団野','鮫島克','池添','藤岡佑','藤岡康','幸','和田竜','小沢','原優介','三浦','津村','大野','石川','丸山','松若','田辺','菱田','吉村','高杉','北村宏','内田博','石橋脩','丸田','柴田善','木幡巧'];
+  for(let i=0;i<selected.length;i++){
    status.textContent=`馬ごとに読み取り中… ${i+1}/${expected}`;
-   const y0=Math.max(0,Math.floor(firstRowY+i*rowHeight));
-   const y1=Math.min(H,Math.floor(firstRowY+(i+1)*rowHeight));
+   const a=selected[i];
+   const top=i===0?Math.max(0,a.y-(selected[i+1].y-a.y)*0.48):(selected[i-1].y+a.y)/2;
+   const bottom=i===selected.length-1?Math.min(H,a.y+(a.y-selected[i-1].y)*0.48):(a.y+selected[i+1].y)/2;
+   const y0=Math.max(0,Math.floor(top-5)), y1=Math.min(H,Math.ceil(bottom+5));
    const rowCanvas=document.createElement('canvas');
-   rowCanvas.width=W*2;rowCanvas.height=Math.max(1,(y1-y0)*2);
-   const ctx=rowCanvas.getContext('2d');
-   ctx.fillStyle='#fff';ctx.fillRect(0,0,rowCanvas.width,rowCanvas.height);
+   rowCanvas.width=Math.round(W*2);rowCanvas.height=Math.max(1,Math.round((y1-y0)*2));
+   const ctx=rowCanvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,rowCanvas.width,rowCanvas.height);
    ctx.drawImage(img,0,y0,W,y1-y0,0,0,rowCanvas.width,rowCanvas.height);
    const rowBlob=await new Promise(resolve=>rowCanvas.toBlob(resolve,'image/png'));
    const rr=await worker.recognize(rowBlob);
    const lines=(rr.data.text||'').split(/\n+/).map(x=>x.replace(/[|｜]/g,' ').replace(/\s+/g,' ').trim()).filter(Boolean);
-   const joined=lines.join(' ');
-   const oddsMatch=joined.match(/\b(\d{1,3}\.\d{1,2})\b/);
+   const joined=lines.join(' '), compact=joined.replace(/\s/g,'');
+   const oddsMatch=joined.match(/\b(\d{1,3}[.,]\d{1,2})\b/);
    const weightMatch=joined.match(/\b((?:4[0-9]|5[0-9]|6[0-9])(?:\.0|\.5))\b/);
-   const jockeyList=['横山和','横山武','横山典','横山琉','富田','冨田','武豊','坂井','西村淳','荻野極','田山','戸崎圭','戸崎','佐々木','岩田康','岩田望','北村友','ルメール','松山','浜中','吉田隼','川田','菅原明','丹内','団野','鮫島克','池添','藤岡佑','藤岡康','幸','和田竜','小沢','原優介','三浦','津村','大野','石川','丸山','松若','田辺','菱田','吉村','高杉','北村宏','内田博','石橋脩','丸田','柴田善','木幡巧'];
-   const jockey=jockeyList.find(j=>joined.replace(/\s/g,'').includes(j.replace(/\s/g,'')))||'';
-   let before=oddsMatch?joined.slice(0,oddsMatch.index):joined;
-   before=before.replace(/^\s*(?:(?:\d{1,2})\s*)?[\-—|)」\]のS5]*\s*/,'')
-    .replace(/(?:牝|牡|セ)\s*\d+.*$/,'')
-    .replace(/^[^一-龯々ぁ-んァ-ヶー]+/,'').trim();
-   // Horse names in this layout are the first blue-name-like text before the odds.
-   let name=cleanHorseName(before);
-   name=name.replace(/(?:27\.3|65\.9|14\.3|23\.5|60\.7|11\.0|149\.4|1\.5|52\.4|178\.5|32\.0|15\.2|8\.7|33\.2|120\.4|30\.0|71\.8).*$/,'');
-   name=name.replace(/\s+/g,'').trim();
-   if(!/[ァ-ヶー]/.test(name)||name.length<3||name.length>22||/^(予想|馬名|オッズ|京都|通常|新聞)$/.test(name))name='';
-   structured.push({no:String(i+1),name,jockey,weight:weightMatch?weightMatch[1]:'',odds:oddsMatch?oddsMatch[1]:''});
+   const jockey=jockeyList.find(j=>compact.includes(j.replace(/\s/g,'')))||'';
+   // Horse name is normally the largest/first Japanese text line in the row.
+   // Try each line independently, ignoring sex/age, jockey, popularity and UI labels.
+   let name='';
+   for(const line of lines){
+    let candidate=line.replace(/\d+(?:[.,]\d+)?\s*人気/g,' ')
+      .replace(/(?:牝|牡|セ)\s*\d+/g,' ')
+      .replace(/\b\d{1,3}[.,]\d{1,2}\b/g,' ')
+      .replace(/\b(?:4[0-9]|5[0-9]|6[0-9])(?:\.0|\.5)\b/g,' ')
+      .replace(/\s+/g,' ').trim();
+    candidate=candidate.replace(/^\d{1,2}\s*/,'').trim();
+    if(jockey)candidate=candidate.replace(jockey,' ').replace(/\s+/g,' ').trim();
+    const n=cleanHorseName(candidate).replace(/\s+/g,'').trim();
+    if(/[ァ-ヶー]/.test(n)&&n.length>=3&&n.length<=22&&!/^(予想|馬名|オッズ|京都|通常|新聞|人気|馬体重|調教|映像)$/.test(n)){
+      name=n;break;
+    }
+   }
+   structured.push({no:String(i+1),name,jockey,weight:weightMatch?weightMatch[1]:'',odds:(oddsMatch?oddsMatch[1]:a.odds).replace(',','.')});
   }
   await worker.terminate();worker=null;
   window.__ocrStructuredRows=structured;
